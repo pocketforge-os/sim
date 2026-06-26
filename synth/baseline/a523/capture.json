@@ -1,0 +1,103 @@
+{
+  "nodes": [
+    {
+      "path": "/dev/input/event2",
+      "name": "TRIMUI Player1",
+      "bustype": 3,
+      "vendor": "045e",
+      "product": "028e",
+      "version": "0110",
+      "ev": [
+        "EV_SYN",
+        "EV_KEY",
+        "EV_ABS"
+      ],
+      "keys": [
+        "BTN_A",
+        "BTN_B",
+        "BTN_X",
+        "BTN_Y",
+        "BTN_TL",
+        "BTN_TR",
+        "BTN_SELECT",
+        "BTN_START",
+        "BTN_MODE",
+        "BTN_THUMBL",
+        "BTN_THUMBR"
+      ],
+      "abs": {
+        "ABS_X": {
+          "min": -32768,
+          "max": 32767,
+          "fuzz": 16,
+          "flat": 128,
+          "resolution": 0
+        },
+        "ABS_Y": {
+          "min": -32768,
+          "max": 32767,
+          "fuzz": 16,
+          "flat": 128,
+          "resolution": 0
+        },
+        "ABS_Z": {
+          "min": 0,
+          "max": 255,
+          "fuzz": 0,
+          "flat": 0,
+          "resolution": 0
+        },
+        "ABS_RX": {
+          "min": -32768,
+          "max": 32767,
+          "fuzz": 16,
+          "flat": 128,
+          "resolution": 0
+        },
+        "ABS_RY": {
+          "min": -32768,
+          "max": 32767,
+          "fuzz": 16,
+          "flat": 128,
+          "resolution": 0
+        },
+        "ABS_RZ": {
+          "min": 0,
+          "max": 255,
+          "fuzz": 0,
+          "flat": 0,
+          "resolution": 0
+        },
+        "ABS_HAT0X": {
+          "min": -1,
+          "max": 1,
+          "fuzz": 0,
+          "flat": 0,
+          "resolution": 0
+        },
+        "ABS_HAT0Y": {
+          "min": -1,
+          "max": 1,
+          "fuzz": 0,
+          "flat": 0,
+          "resolution": 0
+        }
+      }
+    },
+    {
+      "path": "/dev/input/event12",
+      "name": "TrimUI System",
+      "bustype": 25,
+      "vendor": "0000",
+      "product": "0000",
+      "version": "0000",
+      "ev": [
+        "EV_SYN",
+        "EV_KEY"
+      ],
+      "keys": [
+        "KEY_HOMEPAGE"
+      ]
+    }
+  ]
+}
