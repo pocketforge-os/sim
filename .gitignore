@@ -7,7 +7,6 @@ SDL/
 *.o
 *.swp
 .DS_Store
-
 # tsp-an4.4 fb: regenerable artifacts
 *.ppm
 fb/build.log

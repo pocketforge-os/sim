@@ -1,0 +1,2 @@
+INFO  a523: sensor 'imu' (iio qmi8658) is IIO, not evdev — confirm it BINDS separately (R3 hazard)
+OK    a523: descriptor codes are a subset of the probe (asymmetric rule)

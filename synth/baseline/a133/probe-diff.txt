@@ -1,0 +1,1 @@
+OK    a133: descriptor codes are a subset of the probe (asymmetric rule)
