@@ -12,6 +12,11 @@ QEMU_TSP="${QEMU_TSP:?set QEMU_TSP=/home/mm/qemu-tsp/build/qemu-tsp/qemu-aarch64
 ROOTFS="${ROOTFS:?set ROOTFS=/path/to/rootfs-arm64}"
 BIN="${1:?usage: run-in-harness.sh <arm64-binary> [args...]}"; shift || true
 
+# Optional WRITABLE artifact egress: OUT_BIND=<hostdir> exposes it at /out so the headless
+# app can write a framebuffer dump (tsp-an4.4) the host then reads. Used by .5/E7 too.
+EXTRA=()
+[ -n "${OUT_BIND:-}" ] && EXTRA+=(--bind "$OUT_BIND" /out)
+
 exec bwrap \
   --bind "$ROOTFS" / \
   --proc /proc \
@@ -19,6 +24,7 @@ exec bwrap \
   --dev-bind /dev/input /dev/input \
   --ro-bind "$QEMU_TSP" /qemu-tsp \
   --ro-bind "$BIN" /app \
+  "${EXTRA[@]}" \
   --tmpfs /tmp \
   --setenv LD_LIBRARY_PATH /usr/local/lib/aarch64-linux-gnu:/usr/local/lib \
   --setenv SDL_VIDEODRIVER dummy \

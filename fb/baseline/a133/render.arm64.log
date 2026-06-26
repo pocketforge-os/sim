@@ -1,0 +1,4 @@
+tsp-osr-pin: OK window(no-GL)+SDL_CreateRenderer("software") -> 'software'
+virtual fb: memfd 1280x720 (3686400 bytes)
+wrote canvas 1280x720 -> /out/canvas.arm64.ppm
+wrote present(rotation=cw90) 720x1280 -> /out/present.arm64.ppm
