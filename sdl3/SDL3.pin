@@ -1,0 +1,9 @@
+# Pinned stock SDL3 for the SPIKE-3 / sim runtime harness (reproducibility anchor).
+# STOCK upstream SDL3 — NOT libSDL3-pocketforge (the sunxifb fork). SPIKE-3 proves the
+# INPUT/gamepad-enumeration layer, which is independent of SDL's video backend, so the
+# GPU/sunxifb fork is irrelevant here (rendering honesty is tsp-an4.4). Built gamepad-only
+# (no video/audio/udev/dbus/hidapi) and STATIC, so the arm64 probe runs under qemu-tsp with
+# no sysroot.
+repo = https://github.com/libsdl-org/SDL.git
+tag  = release-3.4.10
+# Latest stable SDL3 at 2026-06-26. Even MINOR (3.2/3.4) = stable line.

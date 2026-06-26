@@ -1,0 +1,9 @@
+# Build outputs + vendored upstream clones (all reproducible from pins).
+sdl3/build/
+harness/build/
+**/build/
+SDL/
+# editor / OS noise
+*.o
+*.swp
+.DS_Store

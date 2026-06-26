@@ -1,0 +1,2 @@
+INFO  a133: gamepad advertises 2 BTN_* code(s) the descriptor omits (expected HID superset): BTN_THUMBL, BTN_THUMBR
+OK    a133: descriptor codes are a subset of the probe (asymmetric rule)
