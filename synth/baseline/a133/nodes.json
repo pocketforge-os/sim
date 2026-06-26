@@ -1,0 +1,1 @@
+{"device": "a133", "nodes": [{"role": "pad", "name": "TRIMUI Player1", "node": "/dev/input/event2"}]}

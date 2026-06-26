@@ -1,0 +1,41 @@
+{
+  "sdl_version": "3.4.10",
+  "match_vid": "045e",
+  "match_pid": "028e",
+  "joystick_count": 1,
+  "vidpid_matches": 1,
+  "found": true,
+  "joystick": {
+    "name": "Xbox 360 Controller",
+    "vendor": "045e",
+    "product": "028e",
+    "version": "0110",
+    "guid_raw": "0300a3845e0400008e02000010010000",
+    "guid_gamecontrollerdb": "030000005e0400008e02000010010000"
+  },
+  "is_gamepad": true,
+  "gamepad": {
+    "mapping": "0300a3845e0400008e02000010010000,Smart Pro,a:b0,b:b1,x:b2,y:b3,back:b6,guide:b8,start:b7,leftshoulder:b4,rightshoulder:b5,dpup:h0.1,dpdown:h0.4,dpleft:h0.8,dpright:h0.2,leftx:a0,lefty:a1,rightx:a3,righty:a4,lefttrigger:a2,righttrigger:a5,platform:Linux,",
+    "bindings": [
+      {"out": "a", "in": "b0"},
+      {"out": "b", "in": "b1"},
+      {"out": "x", "in": "b2"},
+      {"out": "y", "in": "b3"},
+      {"out": "back", "in": "b6"},
+      {"out": "guide", "in": "b8"},
+      {"out": "start", "in": "b7"},
+      {"out": "leftshoulder", "in": "b4"},
+      {"out": "rightshoulder", "in": "b5"},
+      {"out": "dpup", "in": "h0.1"},
+      {"out": "dpdown", "in": "h0.4"},
+      {"out": "dpleft", "in": "h0.8"},
+      {"out": "dpright", "in": "h0.2"},
+      {"out": "leftx", "in": "a0"},
+      {"out": "lefty", "in": "a1"},
+      {"out": "rightx", "in": "a3"},
+      {"out": "righty", "in": "a4"},
+      {"out": "lefttrigger", "in": "a2"},
+      {"out": "righttrigger", "in": "a5"}
+    ]
+  }
+}
