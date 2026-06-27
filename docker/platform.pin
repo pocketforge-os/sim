@@ -1,8 +1,6 @@
 # Pinned platform descriptor source for the pocketforge-sim image (reproducibility anchor).
-# platform is a PRIVATE repo, so its content is vendored into the build as a pinned `git archive`
-# (platform-pinned.tar in the build context) rather than cloned from clean — the same provenance
-# model the device image uses for vendor blobs (LOCAL_BLOBS). Regenerate with:
-#   git -C <platform-checkout> archive --format=tar <commit> > platform-pinned.tar
+# platform is PUBLIC (made public 2026-06-27, tsp-qc1.4), so the Dockerfile clones it directly at
+# the pinned commit below — truly reproducible-from-clean, no out-of-band input.
 repo   = https://github.com/pocketforge-os/platform.git
 commit = 716e350ed9e1fb50ebbfde113d5c2d1c8a522822
 ref    = origin/main

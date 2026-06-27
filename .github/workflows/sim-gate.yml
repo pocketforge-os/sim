@@ -1,0 +1,59 @@
+name: sim-gate
+
+# E5 simulator headless CI gate (tsp-qc1.4 / wires infra-106 E7). Builds the reproducible
+# `pocketforge-sim` image from PINNED refs (no /home/mm, no host toolchain) and runs the headless
+# suite NESTED in the container on every PR to main.
+#
+# ADVISORY first: this is NOT a required status check, so a red run does not block merge. Flip to
+# BLOCKING by adding the `headless-suite` job to main's branch-protection required checks once
+# a133+a523 stay green + stable (the E5 owner decision: advisory -> blocking).
+#
+# Runs on the self-hosted Dell device-lab runner (org runner `trimui-build-lab`, labels
+# self-hosted+docker). It needs /dev/uinput + the scoped cap set from docker/README.md (the
+# tsp-qc1.2 nesting verdict) — lighter than --privileged, no host AppArmor change. No ghcr push
+# (build-then-run, per the owner decision).
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: sim-gate-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  headless-suite:
+    runs-on: [self-hosted, docker]
+    timeout-minutes: 45
+    env:
+      IMG: pocketforge-sim:ci-${{ github.run_id }}
+      CAPS: >-
+        --device /dev/uinput --device-cgroup-rule c\ 13:*\ rmw -v /dev/input:/dev/input
+        --cap-add SYS_ADMIN --security-opt apparmor=unconfined --security-opt seccomp=unconfined
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Ensure uinput module (host node is required for the nested sim)
+        run: sudo modprobe uinput || true
+
+      - name: Build pocketforge-sim (pinned, reproducible-from-clean)
+        run: docker build -t "$IMG" .
+
+      - name: check-control a133 a523 (ALL DEVICES PASS, native==qemu byte-identical)
+        run: |
+          docker run --rm \
+            --device /dev/uinput --device-cgroup-rule "c 13:* rmw" -v /dev/input:/dev/input \
+            --cap-add SYS_ADMIN --security-opt apparmor=unconfined --security-opt seccomp=unconfined \
+            "$IMG" check-control a133 a523
+
+      - name: check-sensor a133 a523 (ALL DEVICES PASS, native==qemu byte-identical)
+        run: |
+          docker run --rm \
+            --device /dev/uinput --device-cgroup-rule "c 13:* rmw" -v /dev/input:/dev/input \
+            --cap-add SYS_ADMIN --security-opt apparmor=unconfined --security-opt seccomp=unconfined \
+            "$IMG" check-sensor a133 a523
+
+      - name: Cleanup CI image
+        if: always()
+        run: docker image rm -f "$IMG" || true

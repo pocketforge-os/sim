@@ -15,11 +15,14 @@ arm64 bookworm rootfs + the compiled apps + the platform descriptors** — built
 docker build -t pocketforge-sim .
 ```
 
-Pinned inputs: `debian:bookworm@sha256:30482e87…` (multi-arch index — amd64 build+runtime, arm64
-rootfs), the `qemu-tsp` fork commit (which pins upstream qemu v8.2.2), SDL3 `release-3.4.10`
-(`sim/sdl3/SDL3.pin`), and a pinned `platform` commit. **Residual reproducible-from-clean gap (named):**
-apt installs from the live bookworm suite, not a `snapshot.debian.org` timestamp — a rebuild months
-later may pull newer point-release packages. Hardening follow-up: pin apt to a snapshot mirror.
+Pinned inputs (every external ref, all cloned/pulled from clean — no out-of-band input):
+`debian:bookworm@sha256:30482e87…` (multi-arch index — amd64 build+runtime, arm64 rootfs), the
+`qemu-tsp` fork commit (which pins upstream qemu v8.2.2), SDL3 `release-3.4.10` (`sim/sdl3/SDL3.pin`),
+and the `platform` repo cloned directly at the pinned commit (`docker/platform.pin`; platform is
+**public** as of tsp-qc1.4 — this closed the former private-archive gap). **Residual
+reproducible-from-clean gap (named):** apt installs from the live bookworm suite, not a
+`snapshot.debian.org` timestamp — a rebuild months later may pull newer point-release packages.
+Hardening follow-up: pin apt to a snapshot mirror.
 
 ## Run — the nested-container caps (the `tsp-qc1.2` spike verdict)
 
@@ -69,3 +72,15 @@ pf-sim shell                        # interactive debug
 
 Acceptance bar (carried from E5): **ALL DEVICES PASS**, **native x86 == arm64-under-qemu-tsp
 BYTE-IDENTICAL** — now from a clean image with no hand-staged artifacts, on any host.
+
+## CI gate (tsp-qc1.4 — wires E7/infra-106)
+
+[`.github/workflows/sim-gate.yml`](../.github/workflows/sim-gate.yml) builds this image and runs
+`check-control` + `check-sensor` (a133 a523) nested, on every PR to `main`. It runs on the
+**self-hosted Dell device-lab runner** (org runner `trimui-build-lab`; labels `self-hosted`+`docker`)
+because the nested sim needs `/dev/uinput` + the scoped cap set above. No ghcr push (build-then-run).
+
+It is **ADVISORY** first — not a required status check, so a red run does not block merge. **To flip
+to BLOCKING** once a133+a523 stay green + stable: add the `headless-suite` job to `main`'s
+branch-protection required checks (Settings → Branches, or
+`gh api -X PUT repos/pocketforge-os/sim/branches/main/protection ...`).

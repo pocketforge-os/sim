@@ -26,7 +26,7 @@ docker build -t pocketforge-sim .          # from a clean clone of pocketforge-o
 ### Named reproducible-from-clean gaps (not papered over — ties `tsp-cv7.4.13` discipline)
 
 1. **apt is not snapshot-pinned.** `apt-get install` pulls from the live bookworm suite, so a rebuild months later may get newer point-release packages. Hardening follow-up: pin apt to a `snapshot.debian.org` timestamp.
-2. **platform is a PRIVATE repo**, so its content is provided to the build as a pinned `git archive` (the build does not clone it from clean). Same provenance model as the device image's vendor blobs (LOCAL_BLOBS). `docker/platform.pin` records repo + commit + the descriptor SHAs.
+2. ~~platform private-archive boundary~~ **CLOSED (tsp-qc1.4)** — `platform` was made public, so the Dockerfile now clones it directly at the pinned commit (`docker/platform.pin`). The build is truly reproducible-from-clean with no out-of-band input.
 
 ## Nested run (tsp-qc1.2) — the suite passes INSIDE the container
 
