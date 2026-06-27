@@ -45,6 +45,17 @@ own note flags as *"per-SoC CODE, not data here"* — the sim does **not** repro
 CONTRACT item 5). It is carried as data so a variant whose `display_rect` matched the rotated
 dims would Just Work with zero per-device code.
 
+## The app's on-screen widgets (directional d-pad + stick calibration)
+
+The live framebuffer is the shared app (`../control/hwprobe-lite.c`) drawing each control by the
+KIND `layout.py` emits from the descriptor (`button`/`trigger`/`hat`/`stick`) plus a per-axis
+role (`x`/`y`/`t`/`k`) — so the app draws **direction**, not just lit/dark, with zero per-device
+code and no hand-typed ABI codes (roles come from the generated `evdev_codes`). The d-pad renders
+as a directional cross; a stick renders as a calibration box with a vector from centre to the
+deflection position (how far + which way); a pressed stick (L3/R3) gets a red border — present
+only on the a523, since the a133 omits the `l3`/`r3` rows. Each widget keeps a centre hub/arm lit
+when active so the `.5`/`.6` centre-region assertions still hold byte-identical native==qemu.
+
 ## What this proves — and the HONESTY CONTRACT
 
 **Proves (logical layer):** the picker lists every skinned variant from `[identity]`; a click on
