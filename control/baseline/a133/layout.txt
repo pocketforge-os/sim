@@ -1,16 +1,16 @@
 canvas 1280 720 cw90
 node /dev/input/event2
-ctl btn_south solid 1153 280 44 44 1 1 304 0 0
-ctl btn_east solid 1198 236 44 44 1 1 305 0 0
-ctl btn_west solid 1107 236 44 44 1 1 307 0 0
-ctl btn_north solid 1153 193 44 44 1 1 308 0 0
-ctl btn_select solid 511 609 51 27 1 1 314 0 0
-ctl btn_guide solid 613 609 51 27 1 1 316 0 0
-ctl btn_start solid 715 609 51 27 1 1 315 0 0
-ctl btn_l1 solid 38 107 136 20 1 1 310 0 0
-ctl btn_r1 solid 1102 107 136 20 1 1 311 0 0
-ctl dpad solid 49 204 105 105 2 3 16 -1 1 3 17 -1 1
-ctl stick_l solid 52 424 105 105 2 3 0 -32768 32767 3 1 -32768 32767
-ctl stick_r solid 1122 424 105 105 2 3 3 -32768 32767 3 4 -32768 32767
-ctl trig_l trigger 38 84 136 20 1 3 2 0 255
-ctl trig_r trigger 1102 84 136 20 1 3 5 0 255
+ctl btn_south button 1153 280 44 44 1 1 304 0 0 k
+ctl btn_east button 1198 236 44 44 1 1 305 0 0 k
+ctl btn_west button 1107 236 44 44 1 1 307 0 0 k
+ctl btn_north button 1153 193 44 44 1 1 308 0 0 k
+ctl btn_select button 511 609 51 27 1 1 314 0 0 k
+ctl btn_guide button 613 609 51 27 1 1 316 0 0 k
+ctl btn_start button 715 609 51 27 1 1 315 0 0 k
+ctl btn_l1 button 38 107 136 20 1 1 310 0 0 k
+ctl btn_r1 button 1102 107 136 20 1 1 311 0 0 k
+ctl dpad hat 49 204 105 105 2 3 16 -1 1 x 3 17 -1 1 y
+ctl stick_l stick 52 424 105 105 2 3 0 -32768 32767 x 3 1 -32768 32767 y
+ctl stick_r stick 1122 424 105 105 2 3 3 -32768 32767 x 3 4 -32768 32767 y
+ctl trig_l trigger 38 84 136 20 1 3 2 0 255 t
+ctl trig_r trigger 1102 84 136 20 1 3 5 0 255 t

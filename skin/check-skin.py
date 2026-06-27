@@ -219,35 +219,59 @@ def run_device(device_id, platform_dir, launcher, outdir, apps, do_render):
                 except HardwareAbsent:
                     c.chk(True, f"absent '{iid}': typed hardware-absent (no crash)")
 
-        # ---- owner AVD artifacts (full composition with picker), qemu only ----
-        frames = ["rest"]
+        # ---- owner AVD gallery (full composition with picker), qemu only ----
+        # Drives explicit states to showcase the directional D-pad + the stick calibration box
+        # (position vector + the a523-only pressed state). Frame names are prefixed "avd_" so
+        # they don't collide with the parity-checked matrix frames (qemu-only -> not in parity).
         if do_render and launcher == "qemu":
             picker = SM.build_picker(platform_dir)
-            shots = {}
-            # a representative gallery: rest, a face button, a stick, a trigger
-            gallery = [("rest", set(), "rest")]
-            if any(i["id"] == "south" for i in inputs):
-                gallery.append(("south_press", {"btn_south"}, "A pressed"))
-            sgrp = "stick_l"
-            if sgrp in skin.parts:
-                # reuse the already-captured deflect frame for lstick
-                gallery.append(("lstick_deflect", {"stick_l"}, "left stick"))
-            if "trig_l" in skin.parts:
-                gallery.append(("ltrig_100", {"trig_l"}, "L trigger full"))
+
+            def reset_all():
+                for j in inputs:
+                    jid, jk = j["id"], j.get("kind")
+                    try:
+                        if j["ev_type"] == "EV_KEY":
+                            dev.release(jid)
+                        elif jk == "hat":
+                            dev.move_hat(jid, 0, 0)
+                        elif jk == "stick":
+                            dev.set_stick(jid, 0.0, 0.0)
+                        elif jk == "trigger":
+                            dev.set_axis(jid, 0.0)
+                    except HardwareAbsent:
+                        pass
+
+            gallery = [
+                ("rest",       lambda: None,                              set(),         "rest"),
+                ("dpad_up",    lambda: dev.move_hat("dpad", 0, -1),       {"dpad"},      "D-pad UP"),
+                ("dpad_down",  lambda: dev.move_hat("dpad", 0, 1),        {"dpad"},      "D-pad DOWN"),
+                ("dpad_left",  lambda: dev.move_hat("dpad", -1, 0),       {"dpad"},      "D-pad LEFT"),
+                ("dpad_right", lambda: dev.move_hat("dpad", 1, 0),        {"dpad"},      "D-pad RIGHT"),
+                ("lstick_diag", lambda: dev.set_stick("lstick", 0.7, -0.7), {"stick_l"}, "L-stick up-right"),
+                ("south_press", lambda: dev.press("south"),              {"btn_south"}, "A pressed"),
+                ("ltrig_half", lambda: dev.set_axis("ltrig", 0.5),       {"trig_l"},    "L-trigger 50%"),
+            ]
+            if dev.has_input("l3"):   # a523 only: the stick PRESSED (L3) — a133 omits the row
+                gallery.append(("l3_press", lambda: dev.press("l3"), {"stick_l"},
+                                "L3 stick pressed (5050 only)"))
+
             evdir = os.path.join(HERE, "baseline", device_id)
             os.makedirs(evdir, exist_ok=True)
-            for frame_name, lit_parts, label in gallery:
-                fb_ppm = os.path.join(outdir, "frames", f"{frame_name}.ppm")
-                if not os.path.isfile(fb_ppm):
-                    continue
-                out_ppm = os.path.join(outdir, f"avd_{frame_name}.ppm")
+            shots = []
+            for name, setup, lit_parts, label in gallery:
+                reset_all()
+                setup()
+                snap = f"avd_{name}"
+                dev.snapshot(snap)
+                fb_ppm = os.path.join(outdir, "frames", f"{snap}.ppm")
+                out_ppm = os.path.join(outdir, f"{snap}.ppm")
                 _render_shot(skin, dev, body_ppm, lit_ppm, fb_ppm, lit_parts, out_ppm,
-                             picker=picker, selected=device_id,
-                             title=f"{device_id}  {label}")
+                             picker=picker, selected=device_id, title=f"{device_id}  {label}")
                 w, h, rgb = read_ppm(out_ppm)
-                write_png(os.path.join(evdir, f"avd_{frame_name}.png"), w, h, rgb)
-                shots[frame_name] = True
-            c.chk(len(shots) >= 2, f"owner AVD shots rendered: {sorted(shots)}")
+                write_png(os.path.join(evdir, f"avd_{name}.png"), w, h, rgb)
+                shots.append(name)
+            reset_all()
+            c.chk(len(shots) >= 6, f"owner AVD gallery rendered: {shots}")
 
     return c.fails
 

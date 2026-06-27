@@ -46,10 +46,15 @@ struct in_ev { long sec, usec; unsigned short type, code; int value; };
 #define MAX_CTL   40
 #define MAX_NODES 4
 
-struct code { int type, code, vmin, vmax, value; };
+// widget kind (from layout.txt; layout.py derives it from the descriptor — zero per-device code)
+enum { KIND_BUTTON = 0, KIND_TRIGGER, KIND_HAT, KIND_STICK };
+
+// role tags each code so we can draw DIRECTION without hand-typing ABI codes here:
+// 'k' digital press, 't' trigger axis, 'x'/'y' the two axes of a stick or hat.
+struct code { int type, code, vmin, vmax, value; char role; };
 struct ctl {
     char skin[40];
-    int trigger;            // 0 solid, 1 proportional trigger
+    int kind;               // KIND_BUTTON | KIND_TRIGGER | KIND_HAT | KIND_STICK
     int x, y, w, h;
     int ncodes;
     struct code codes[MAX_CODES];
@@ -134,8 +139,11 @@ static int parse_layout(const char *path) {
             struct ctl *c = &ctls[n_ctl++];
             memset(c, 0, sizeof *c);
             snprintf(c->skin, sizeof c->skin, "%s", strtok(NULL, " \t\n"));
-            char *render = strtok(NULL, " \t\n");
-            c->trigger = render && !strcmp(render, "trigger");
+            char *kind = strtok(NULL, " \t\n");
+            c->kind = !kind ? KIND_BUTTON
+                    : !strcmp(kind, "trigger") ? KIND_TRIGGER
+                    : !strcmp(kind, "hat")     ? KIND_HAT
+                    : !strcmp(kind, "stick")   ? KIND_STICK : KIND_BUTTON;
             c->x = atoi(strtok(NULL, " \t\n"));
             c->y = atoi(strtok(NULL, " \t\n"));
             c->w = atoi(strtok(NULL, " \t\n"));
@@ -148,8 +156,10 @@ static int parse_layout(const char *path) {
                 cc->code = atoi(strtok(NULL, " \t\n"));
                 cc->vmin = atoi(strtok(NULL, " \t\n"));
                 cc->vmax = atoi(strtok(NULL, " \t\n"));
+                char *role = strtok(NULL, " \t\n");
+                cc->role = role ? role[0] : '?';
                 // rest value: triggers start released (min); sticks/hats start centred.
-                cc->value = (cc->type == EV_ABS && !c->trigger) ? (cc->vmin + cc->vmax) / 2
+                cc->value = (cc->type == EV_ABS && c->kind != KIND_TRIGGER) ? (cc->vmin + cc->vmax) / 2
                           : (cc->type == EV_ABS) ? cc->vmin : 0;
             }
         }
@@ -198,17 +208,90 @@ static double ctl_fraction(const struct ctl *c) {  // trigger fill 0..1
     return f < 0 ? 0 : f > 1 ? 1 : f;
 }
 
+// normalized -1..1 deflection of the stick/hat axis tagged <role> (0 if absent).
+static double axis_norm(const struct ctl *c, char role) {
+    for (int j = 0; j < c->ncodes; j++) {
+        const struct code *cc = &c->codes[j];
+        if (cc->role == role && cc->type == EV_ABS) {
+            double half = (cc->vmax - cc->vmin) / 2.0;
+            if (half == 0) return 0;
+            double n = ((double)cc->value - (cc->vmin + cc->vmax) / 2.0) / half;
+            return n < -1 ? -1 : n > 1 ? 1 : n;
+        }
+    }
+    return 0;
+}
+// is any digital (stick-click L3/R3) code on? a133 sticks have NO such code -> never pressed.
+static int any_key(const struct ctl *c) {
+    for (int j = 0; j < c->ncodes; j++)
+        if (c->codes[j].type == EV_KEY && c->codes[j].value) return 1;
+    return 0;
+}
+
+// D-pad: a directional cross. The active direction's arm + the centre hub light; the hub
+// guarantees the region-sample at the rect centre is red iff the hat is deflected (any dir).
+static void render_hat(SDL_Renderer *r, struct ctl *c) {
+    int hx = (int)axis_norm(c, 'x'), hy = (int)axis_norm(c, 'y');
+    int hxs = hx > 0 ? 1 : hx < 0 ? -1 : 0, hys = hy > 0 ? 1 : hy < 0 ? -1 : 0;
+    int t = c->w / 3 < c->h / 3 ? c->w / 3 : c->h / 3;       // arm thickness
+    int cx = c->x + c->w / 2, cy = c->y + c->h / 2, g = 70, R = 220, D = 30;
+    fill(r, cx - t / 2, c->y, t, c->h, g, g, g);             // vertical bar
+    fill(r, c->x, cy - t / 2, c->w, t, g, g, g);             // horizontal bar
+    if (hxs > 0) fill(r, cx, cy - t / 2, c->w / 2, t, R, D, D);          // right
+    if (hxs < 0) fill(r, c->x, cy - t / 2, c->w / 2, t, R, D, D);        // left
+    if (hys > 0) fill(r, cx - t / 2, cy, t, c->h / 2, R, D, D);          // down
+    if (hys < 0) fill(r, cx - t / 2, c->y, t, c->h / 2, R, D, D);        // up
+    int on = hxs || hys;
+    fill(r, cx - t / 2, cy - t / 2, t, t, on ? R : g, on ? D : g, on ? D : g);  // centre hub
+}
+
+// Analog stick: a calibration box. A vector from centre to the deflection position shows HOW
+// FAR + WHICH WAY (like a stick-calibration chart); a red border shows the stick PRESSED (L3/R3,
+// a523 only — a133 has no stick-click code so it never lights). The centre hub guarantees the
+// region-sample is red iff the stick is active (deflected past deadzone OR pressed).
+static void render_stick(SDL_Renderer *r, struct ctl *c) {
+    int cx = c->x + c->w / 2, cy = c->y + c->h / 2;
+    int pressed = any_key(c), active = ctl_active(c);
+    fill(r, c->x, c->y, c->w, c->h, 40, 40, 40);            // box interior
+    int bw = pressed ? 4 : 1;                               // border (red + thick = pressed)
+    for (int k = 0; k < bw; k++) {
+        SDL_SetRenderDrawColor(r, pressed ? 220 : 110, pressed ? 30 : 110, pressed ? 30 : 110, 255);
+        SDL_FRect e = {(float)(c->x + k), (float)(c->y + k),
+                       (float)(c->w - 2 * k), (float)(c->h - 2 * k)};
+        SDL_RenderRect(r, &e);
+    }
+    fill(r, cx, c->y + 5, 1, c->h - 10, 80, 80, 80);        // crosshair guides (faint)
+    fill(r, c->x + 5, cy, c->w - 10, 1, 80, 80, 80);
+    double nx = axis_norm(c, 'x'), ny = axis_norm(c, 'y');
+    int margin = c->w / 8 + 2;
+    int dx = cx + (int)(nx * (c->w / 2 - margin)), dy = cy + (int)(ny * (c->h / 2 - margin));
+    int hub = c->w / 8 < 6 ? 6 : c->w / 8;
+    int cr = active ? 220 : 150, cg = active ? 30 : 150, cb = active ? 30 : 150;
+    SDL_SetRenderDrawColor(r, cr, cg, cb, 255);
+    SDL_RenderLine(r, (float)cx, (float)cy, (float)dx, (float)dy);          // deflection vector
+    fill(r, dx - hub / 2, dy - hub / 2, hub, hub, cr, cg, cb);              // position dot
+    fill(r, cx - hub / 2, cy - hub / 2, hub, hub, active ? 220 : 70,        // centre hub
+         active ? 30 : 70, active ? 30 : 70);
+}
+
 static void render(SDL_Renderer *r) {
     fill(r, 0, 0, CANVAS_W, CANVAS_H, 24, 24, 24);            // bg gray (matches .4)
     for (int i = 0; i < n_ctl; i++) {
         struct ctl *c = &ctls[i];
-        if (c->trigger) {
+        switch (c->kind) {
+        case KIND_TRIGGER: {
             fill(r, c->x, c->y, c->w, c->h, 70, 70, 70);     // track
             int fw = (int)(c->w * ctl_fraction(c) + 0.5);
             if (fw > 0) fill(r, c->x, c->y, fw, c->h, 220, 30, 30);   // proportional fill
-        } else {
+            break;
+        }
+        case KIND_HAT:   render_hat(r, c);   break;
+        case KIND_STICK: render_stick(r, c); break;
+        default: {  // KIND_BUTTON
             int on = ctl_active(c);
             fill(r, c->x, c->y, c->w, c->h, on ? 220 : 70, on ? 30 : 70, on ? 30 : 70);
+            break;
+        }
         }
     }
     SDL_RenderPresent(r);

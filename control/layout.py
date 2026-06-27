@@ -78,8 +78,8 @@ class Group:
     def __init__(self, skin_part, rect_skin):
         self.skin_part = skin_part
         self.rect_skin = rect_skin          # (x, y, w, h) in skin-image space
-        self.render = "solid"               # "solid" | "trigger"
-        self.codes = []                     # [(ev_type:int, code:int, vmin, vmax)]
+        self.render = "button"              # "button" | "trigger" | "hat" | "stick"
+        self.codes = []                     # [(ev_type:int, code:int, vmin, vmax, role)]
         self.input_ids = []                 # which input ids map here (for diagnostics)
         self.canvas = None                  # (x, y, w, h) on the render canvas, after fit
 
@@ -111,12 +111,27 @@ def compute_layout(desc):
 
         names = [c for c in inp["code"].split(",") if c]
         ev = EV_KEY if inp["ev_type"] == "EV_KEY" else EV_ABS
-        for n in names:
+        kind = inp.get("kind")
+        for idx, n in enumerate(names):
             code = ec.code_value(n)
             vmin, vmax = _abs_range(inp, n) if ev == EV_ABS else (0, 0)
-            g.codes.append((ev, code, vmin, vmax))
-        if inp.get("kind") == "trigger":
+            # role lets the app draw direction WITHOUT hand-typing ABI codes: a digital press
+            # ("k"); a trigger axis ("t"); the first/second axis of a stick or hat ("x"/"y").
+            if ev == EV_KEY:
+                role = "k"
+            elif kind == "trigger":
+                role = "t"
+            else:
+                role = "x" if idx == 0 else "y"
+            g.codes.append((ev, code, vmin, vmax, role))
+        # render KIND drives the app widget (button / trigger / hat cross / stick calibration box);
+        # trigger wins, then hat, then stick — a stick-click shares the stick part and keeps "stick".
+        if kind == "trigger":
             g.render = "trigger"
+        elif kind == "hat" and g.render != "trigger":
+            g.render = "hat"
+        elif kind == "stick" and g.render not in ("trigger", "hat"):
+            g.render = "stick"
 
     ordered = [groups[sp] for sp in order]
     _fit(canvas, ordered)
@@ -165,17 +180,17 @@ def emit_layout_txt(canvas, groups, nodes):
 
         canvas <W> <H> <rotation>
         node <path>                          (one per evdev node)
-        ctl <skin_part> <render> <x> <y> <w> <h> <ncodes> [<evtype> <code> <min> <max>]*
+        ctl <skin_part> <kind> <x> <y> <w> <h> <ncodes> [<evtype> <code> <min> <max> <role>]*
 
-    render in {solid,trigger}; evtype in {1,3}. Coordinates are CANVAS space."""
+    kind in {button,trigger,hat,stick}; evtype in {1,3}; role in {k,t,x,y}. CANVAS space."""
     lines = [f"canvas {canvas['w']} {canvas['h']} {canvas['rotation']}"]
     for n in nodes:
         lines.append(f"node {n}")
     for g in groups:
         x, y, w, h = g.canvas
         parts = [f"ctl {g.skin_part} {g.render} {x} {y} {w} {h} {len(g.codes)}"]
-        for (ev, code, vmin, vmax) in g.codes:
-            parts.append(f"{ev} {code} {vmin} {vmax}")
+        for (ev, code, vmin, vmax, role) in g.codes:
+            parts.append(f"{ev} {code} {vmin} {vmax} {role}")
         lines.append(" ".join(parts))
     return "\n".join(lines) + "\n"
 
@@ -194,8 +209,8 @@ def cmd_show(a):
     out = {"device": a.device, "canvas": canvas,
            "groups": [{"skin_part": g.skin_part, "render": g.render, "canvas": g.canvas,
                        "inputs": g.input_ids,
-                       "codes": [{"ev": e, "code": c, "min": mn, "max": mx}
-                                 for (e, c, mn, mx) in g.codes]} for g in groups]}
+                       "codes": [{"ev": e, "code": c, "min": mn, "max": mx, "role": ro}
+                                 for (e, c, mn, mx, ro) in g.codes]} for g in groups]}
     json.dump(out, sys.stdout, indent=2)
     print()
     return 0

@@ -46,15 +46,34 @@ a523 stick_l tap -> press/release(l3)   (clickable: l3 row present)
 absent 'home'/'l3'/'r3' on a133 -> typed hardware-absent (no crash)
 ```
 
+## App on-screen rendering (the live framebuffer, enriched)
+
+The shared app (`control/hwprobe-lite.c`) draws each control by KIND (emitted by `layout.py` from
+the descriptor — zero per-device code, no hand-typed ABI codes; the per-axis role comes from the
+generated table):
+
+- **D-pad** → a directional **cross**: the pressed direction's arm + the centre hub light (so
+  up/down/left/right are legible, not a featureless square).
+- **Analog stick** → a **calibration box**: a vector from centre to the deflection position shows
+  HOW FAR + WHICH WAY (like a stick-calibration chart).
+- **Stick pressed (L3/R3)** → a **red border** — present only on the a523 (the `l3`/`r3` rows
+  exist there; the a133 omits them, so its sticks never show pressed: a pure-DATA difference).
+- Buttons stay solid; triggers stay a proportional fill.
+
+The centre hub/arm guarantees the region-sample at each rect centre is red iff the control is
+active, so **all `.5` + `.6` assertions still pass byte-identical native==qemu** with the richer art.
+
 ## Owner visual-OK artifacts
 
 `baseline/<id>/avd_*.png` — the rendered AVD: the picker panel (TrimUI > 5040 / 5050, selected
-highlighted) + the bezel `body.png` + the pressed control lit (bezel overlay) + the **live arm64
+highlighted) + the bezel `body.png` + the active control lit (bezel overlay) + the **live arm64
 app framebuffer** composited into `display_rect`:
 
 - `avd_rest.png` — nothing pressed
+- `avd_dpad_{up,down,left,right}.png` — the directional d-pad cross
+- `avd_lstick_diag.png` — left stick deflected up-right (the calibration vector)
 - `avd_south_press.png` — A pressed (lit on the bezel **and** in the live app screen)
-- `avd_lstick_deflect.png` — left stick deflected
-- `avd_ltrig_100.png` — left trigger full
+- `avd_ltrig_half.png` — left trigger at 50%
+- `avd_l3_press.png` — **a523 only**: the left stick PRESSED (red calibration border)
 
 These are the frames awaiting the owner's explicit visual OK (the bead's hardware/visual gate).
