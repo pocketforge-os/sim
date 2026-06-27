@@ -8,7 +8,7 @@
 #   Usage:  QEMU_TSP=... ROOTFS=... run-in-harness.sh /host/path/to/arm64bin [args...]
 # Needs sudo (the uinput event node is root-only). The binary is bound in at /app.
 set -euo pipefail
-QEMU_TSP="${QEMU_TSP:?set QEMU_TSP=/home/mm/qemu-tsp/build/qemu-tsp/qemu-aarch64}"
+QEMU_TSP="${QEMU_TSP:?set QEMU_TSP (baked in the pocketforge-sim image; see docker/README.md)}"
 ROOTFS="${ROOTFS:?set ROOTFS=/path/to/rootfs-arm64}"
 BIN="${1:?usage: run-in-harness.sh <arm64-binary> [args...]}"; shift || true
 

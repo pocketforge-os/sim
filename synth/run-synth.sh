@@ -20,9 +20,9 @@
 #   DEVICES    space-separated device ids                          (default "a133 a523")
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-QEMU_TSP="${QEMU_TSP:?set QEMU_TSP=/home/mm/qemu-tsp/build/qemu-tsp/qemu-aarch64}"
-SDLDIR="${SDLDIR:?set SDLDIR=/home/mm/sim-build/sdl3}"
-PLATFORM="${PLATFORM:?set PLATFORM=/home/mm/platform}"
+QEMU_TSP="${QEMU_TSP:?set QEMU_TSP (baked in the pocketforge-sim image; see docker/README.md)}"
+SDLDIR="${SDLDIR:?set SDLDIR (baked in the pocketforge-sim image)}"
+PLATFORM="${PLATFORM:?set PLATFORM (baked in the pocketforge-sim image)}"
 DEVICES="${DEVICES:-a133 a523}"
 SPIKE3="$HERE/../spike3"
 CAPS="python3 $PLATFORM/core/caps.py"
@@ -35,7 +35,8 @@ cd "$WORK"
 
 # raw C evdev probe (proven in tsp-an4.1) + the SDL3 gamepad probe (tsp-an4.2) — reused as-is.
 cp "$SPIKE3/sdl3-gamepad-probe.c" .
-cp "$QEMU_TSP"/../../regression/probe.c ./evdev-probe.c 2>/dev/null || cp /home/mm/qemu-tsp/regression/probe.c ./evdev-probe.c
+cp "$QEMU_TSP"/../../regression/probe.c ./evdev-probe.c 2>/dev/null || \
+  { echo "ERROR: regression/probe.c not found next to QEMU_TSP — point QEMU_TSP at a qemu-tsp build dir (host-dev/regression only; not part of the containerized suite)"; exit 1; }
 
 echo "== regenerate-check the evdev code table vs the kernel ABI + caps.py vocab =="
 python3 "$HERE/gen_evdev_codes.py" --platform "$PLATFORM" --check
