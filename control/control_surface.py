@@ -36,12 +36,15 @@ import time
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "..", "synth"))
 sys.path.insert(0, os.path.join(HERE, "..", "fb"))
+sys.path.insert(0, os.path.join(HERE, "..", "sensor"))
 sys.path.insert(0, HERE)
 
 from uinput_synth import Synth, load_descriptor          # noqa: E402  (the .3 foundation)
 from ppm2png import read_ppm                              # noqa: E402  (the .4 PPM reader)
 import layout as L                                        # noqa: E402
 from broker_stub import BrokerStub, HardwareAbsent, PermissionDenied  # noqa: E402
+from iio_synth import IIOSynth                            # noqa: E402  (the .7 virtual IIO device)
+from physical_model import pose_from_drag                 # noqa: E402  (GUI tilt-bubble gesture)
 
 HARNESS = os.path.join(HERE, "..", "harness", "run-in-harness.sh")
 
@@ -135,6 +138,10 @@ class Device:
         self.canvas, self.groups = L.compute_layout(self.desc)
         self.synth = None
         self.broker = BrokerStub(self.desc)
+        # the .7 virtual IIO device: synthesized from [[sensors]], driven by the broker's physical
+        # model, read by the app at /sys/bus/iio/devices (qemu) / PF_IIO_ROOT (native).
+        self.iio_root = os.path.join(self.outdir, "iio")
+        self.iio = IIOSynth(self.desc, self.iio_root)
         self._proc = None
         self._req_fd = self._resp_fd = None
         self._frame = None          # (w, h, rgb)
@@ -158,6 +165,9 @@ class Device:
         nodes = [n["node"] for n in self.synth.nodes() if n["node"]]
         if not nodes:
             raise ControlError("synth produced no evdev nodes")
+        # 1b) synthesize the virtual IIO device from [[sensors]] (no-op when the descriptor has no
+        #     imu -> a133 reads hardware-absent). Initialized at the rest pose.
+        self.iio.create()
         # 2) write the descriptor-computed layout the app draws from (ONE source of truth).
         with open(os.path.join(self.outdir, "layout.txt"), "w") as f:
             f.write(L.emit_layout_txt(self.canvas, self.groups, nodes))
@@ -173,14 +183,19 @@ class Device:
             if not self.app_x86:
                 raise ControlError("launcher=native needs app_x86")
             cmd = [self.app_x86, self.outdir]
-            env = dict(os.environ)
+            # native: no sandbox to remap /sys, so point the app at the synthesized IIO tree
+            # directly -> native + qemu read byte-identical files.
+            env = dict(os.environ, PF_IIO_ROOT=self.iio_root)
             self._proc = subprocess.Popen(cmd, stderr=self._applog, env=env)
         elif self.launcher == "qemu":
             for k, v in (("app_arm64", self.app_arm64), ("qemu_tsp", self.qemu_tsp),
                          ("rootfs", self.rootfs)):
                 if not v:
                     raise ControlError(f"launcher=qemu needs {k}")
-            env = dict(os.environ, QEMU_TSP=self.qemu_tsp, ROOTFS=self.rootfs, OUT_BIND=self.outdir)
+            # qemu: bind the synthesized IIO tree at the honest ABI path; the app's default
+            # PF_IIO_ROOT=/sys/bus/iio/devices then reads it indistinguishably from hardware.
+            env = dict(os.environ, QEMU_TSP=self.qemu_tsp, ROOTFS=self.rootfs, OUT_BIND=self.outdir,
+                       IIO_BIND=self.iio_root)
             cmd = ["bash", HARNESS, self.app_arm64, "/out"]
             self._proc = subprocess.Popen(cmd, stderr=self._applog, env=env)
         else:
@@ -221,6 +236,8 @@ class Device:
         if self.synth:
             self.synth.destroy()
             self.synth = None
+        if self.iio:
+            self.iio.destroy()
 
     # ---------- the FIFO handshake ----------
     def _write_req(self, msg):
@@ -271,7 +288,34 @@ class Device:
 
     # ---------- broker-routed capabilities (set_pose / set_capability) ----------
     def set_pose(self, **pose):
-        return self.broker.set_pose(**pose)
+        """Drive the single physical model through the broker, then push the derived accel/gyro
+        into the virtual IIO device the app reads. ONE call serves GUI + test (both land here)."""
+        state = self.broker.set_pose(**pose)
+        self.iio.update(self.broker.model)
+        return state
+
+    def set_pose_from_drag(self, dx, dy):
+        """The GUI tilt-bubble client path: a normalized drag -> the SAME set_pose the test calls
+        (pose_from_drag returns degrees). Proves 'one model, two clients' WITHOUT rendering pixels
+        (so no owner visual gate)."""
+        return self.set_pose(**pose_from_drag(dx, dy))
+
+    def read_imu(self):
+        """Ask the IDENTICAL app (under qemu / native) to read the injected IMU off the virtual
+        IIO device and report it back. Returns the DEVICE-frame accel+gyro (SI) the app recovered
+        by applying scale + the descriptor mount_matrix to the chip-frame raws, or None if the app
+        reported the sensor hardware-absent. This is the app-CONSUMES-the-injection proof."""
+        name = self.iio.name or "qmi8658"
+        self._write_req(f"imu {name}")
+        resp = self._read_resp(self.snap_timeout)
+        if resp.startswith("imu-absent"):
+            return None
+        if not resp.startswith("imu "):
+            raise ControlError(f"read_imu: unexpected app reply {resp!r}")
+        # reply: "imu <name> ax ay az gx gy gz"  (milli-SI integers: mm/s^2, mrad/s)
+        parts = resp.split()
+        vals = [int(v) / 1000.0 for v in parts[2:8]]
+        return {"accel": vals[0:3], "gyro": vals[3:6], "raw_reply": resp}
 
     def set_capability(self, name, value):
         return self.broker.set_capability(name, value)
@@ -287,6 +331,16 @@ class Device:
 
     def assert_capability_denied(self, name):
         return self.broker.assert_capability_denied(name)
+
+    # ---------- actuators + accessibility preferences (unified no-op shape) ----------
+    def acquire_rumble(self):
+        return self.broker.acquire_rumble()
+
+    def set_preference(self, name, value):
+        return self.broker.set_preference(name, value)
+
+    def get_preference(self, name, default=None):
+        return self.broker.get_preference(name, default)
 
     # ---------- framebuffer capture + region assertion ----------
     def snapshot(self, name=None):
