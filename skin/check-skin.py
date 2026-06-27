@@ -90,9 +90,9 @@ def _canvas_group(dev, skin_part):
 
 
 def _render_shot(skin, dev, body_ppm, lit_ppm, fb_ppm, lit_parts, out_ppm,
-                 picker=None, selected=None, title=""):
+                 picker=None, selected=None, title="", hat_dirs=None):
     scene = skin.emit_scene(body_ppm, lit_ppm, fb_ppm, lit_parts,
-                            picker=picker, selected=selected, title=title)
+                            picker=picker, selected=selected, title=title, hat_dirs=hat_dirs)
     scene_path = out_ppm + ".scene"
     with open(scene_path, "w") as f:
         f.write(scene)
@@ -241,24 +241,25 @@ def run_device(device_id, platform_dir, launcher, outdir, apps, do_render):
                     except HardwareAbsent:
                         pass
 
+            # (name, setup, lit_parts, label, hat_dir) — hat_dir feeds the bezel directional light
             gallery = [
-                ("rest",       lambda: None,                              set(),         "rest"),
-                ("dpad_up",    lambda: dev.move_hat("dpad", 0, -1),       {"dpad"},      "D-pad UP"),
-                ("dpad_down",  lambda: dev.move_hat("dpad", 0, 1),        {"dpad"},      "D-pad DOWN"),
-                ("dpad_left",  lambda: dev.move_hat("dpad", -1, 0),       {"dpad"},      "D-pad LEFT"),
-                ("dpad_right", lambda: dev.move_hat("dpad", 1, 0),        {"dpad"},      "D-pad RIGHT"),
-                ("lstick_diag", lambda: dev.set_stick("lstick", 0.7, -0.7), {"stick_l"}, "L-stick up-right"),
-                ("south_press", lambda: dev.press("south"),              {"btn_south"}, "A pressed"),
-                ("ltrig_half", lambda: dev.set_axis("ltrig", 0.5),       {"trig_l"},    "L-trigger 50%"),
+                ("rest",       lambda: None,                              set(),         "rest", (0, 0)),
+                ("dpad_up",    lambda: dev.move_hat("dpad", 0, -1),       {"dpad"},      "D-pad UP", (0, -1)),
+                ("dpad_down",  lambda: dev.move_hat("dpad", 0, 1),        {"dpad"},      "D-pad DOWN", (0, 1)),
+                ("dpad_left",  lambda: dev.move_hat("dpad", -1, 0),       {"dpad"},      "D-pad LEFT", (-1, 0)),
+                ("dpad_right", lambda: dev.move_hat("dpad", 1, 0),        {"dpad"},      "D-pad RIGHT", (1, 0)),
+                ("lstick_diag", lambda: dev.set_stick("lstick", 0.7, -0.7), {"stick_l"}, "L-stick up-right", (0, 0)),
+                ("south_press", lambda: dev.press("south"),              {"btn_south"}, "A pressed", (0, 0)),
+                ("ltrig_half", lambda: dev.set_axis("ltrig", 0.5),       {"trig_l"},    "L-trigger 50%", (0, 0)),
             ]
             if dev.has_input("l3"):   # a523 only: the stick PRESSED (L3) — a133 omits the row
                 gallery.append(("l3_press", lambda: dev.press("l3"), {"stick_l"},
-                                "L3 stick pressed (5050 only)"))
+                                "L3 stick pressed (5050 only)", (0, 0)))
 
             evdir = os.path.join(HERE, "baseline", device_id)
             os.makedirs(evdir, exist_ok=True)
             shots = []
-            for name, setup, lit_parts, label in gallery:
+            for name, setup, lit_parts, label, hat_dir in gallery:
                 reset_all()
                 setup()
                 snap = f"avd_{name}"
@@ -266,7 +267,8 @@ def run_device(device_id, platform_dir, launcher, outdir, apps, do_render):
                 fb_ppm = os.path.join(outdir, "frames", f"{snap}.ppm")
                 out_ppm = os.path.join(outdir, f"{snap}.ppm")
                 _render_shot(skin, dev, body_ppm, lit_ppm, fb_ppm, lit_parts, out_ppm,
-                             picker=picker, selected=device_id, title=f"{device_id}  {label}")
+                             picker=picker, selected=device_id, title=f"{device_id}  {label}",
+                             hat_dirs={"dpad": hat_dir})
                 w, h, rgb = read_ppm(out_ppm)
                 write_png(os.path.join(evdir, f"avd_{name}.png"), w, h, rgb)
                 shots.append(name)

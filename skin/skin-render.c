@@ -38,7 +38,7 @@
 #define MAXPART 64
 #define MAXPICK 32
 
-typedef struct { char name[40], kind[16]; int x, y, w, h, lit; } Part;
+typedef struct { char name[40], kind[16]; int x, y, w, h, lit, hx, hy; } Part;
 typedef struct { char man[40], code[24], model[48]; int sel; } Pick;
 
 typedef struct {
@@ -165,6 +165,8 @@ static int parse_scene(FILE *f, Scene *sc) {
             p->x = atoi(strtok(NULL, " ")); p->y = atoi(strtok(NULL, " "));
             p->w = atoi(strtok(NULL, " ")); p->h = atoi(strtok(NULL, " "));
             p->lit = atoi(strtok(NULL, " "));
+            char *hx = strtok(NULL, " "), *hy = strtok(NULL, " ");
+            p->hx = hx ? atoi(hx) : 0; p->hy = hy ? atoi(hy) : 0;
         } else if (!strcmp(tok, "picker") && sc->npicks < MAXPICK) {
             Pick *p = &sc->picks[sc->npicks++];
             strncpy(p->man, strtok(NULL, " "), 39);
@@ -195,13 +197,31 @@ static void render_scene(SDL_Renderer *r, Scene *sc, int show_outline) {
     SDL_Texture *body = tex_from_ppm(r, sc->body, &bw, &bh);
     if (body) { SDL_FRect d = {(float)ox, 0, (float)bw, (float)bh}; SDL_RenderTexture(r, body, NULL, &d); }
 
-    // 2) lit overlays (copy each lit control's rect from body_lit over the body)
+    // 2) lit overlays (copy each lit control's rect from body_lit over the body). A lit d-pad
+    //    with a direction lights ONLY the pressed arm sub-rect(s) — same plus geometry as the
+    //    bezel art (t = w/3) — so the bezel shows just the direction hit, not the whole cross.
     SDL_Texture *litb = tex_from_ppm(r, sc->lit_body, &bw, &bh);
-    if (litb) for (int i = 0; i < sc->nparts; i++) if (sc->parts[i].lit) {
+    if (litb) for (int i = 0; i < sc->nparts; i++) {
         Part *p = &sc->parts[i];
-        SDL_FRect s = {(float)p->x, (float)p->y, (float)p->w, (float)p->h};
-        SDL_FRect d = {(float)(ox + p->x), (float)p->y, (float)p->w, (float)p->h};
-        SDL_RenderTexture(r, litb, &s, &d);
+        if (!p->lit) continue;
+        if (!strcmp(p->kind, "hat") && (p->hx || p->hy)) {
+            int t = (p->w / 3 < p->h / 3 ? p->w / 3 : p->h / 3), hl = t / 2;
+            int cx = p->x + p->w / 2, cy = p->y + p->h / 2;
+            int x0 = p->x, y0 = p->y, x1 = p->x + p->w, y1 = p->y + p->h;
+            SDL_FRect arms[2]; int na = 0;
+            if (p->hx > 0) arms[na++] = (SDL_FRect){cx - hl, cy - hl, x1 - (cx - hl), t};   // right
+            if (p->hx < 0) arms[na++] = (SDL_FRect){x0, cy - hl, (cx + hl) - x0, t};         // left
+            if (p->hy > 0) arms[na++] = (SDL_FRect){cx - hl, cy - hl, t, y1 - (cy - hl)};    // down
+            if (p->hy < 0) arms[na++] = (SDL_FRect){cx - hl, y0, t, (cy + hl) - y0};         // up
+            for (int a = 0; a < na; a++) {
+                SDL_FRect d = {arms[a].x + ox, arms[a].y, arms[a].w, arms[a].h};
+                SDL_RenderTexture(r, litb, &arms[a], &d);
+            }
+        } else {
+            SDL_FRect s = {(float)p->x, (float)p->y, (float)p->w, (float)p->h};
+            SDL_FRect d = {(float)(ox + p->x), (float)p->y, (float)p->w, (float)p->h};
+            SDL_RenderTexture(r, litb, &s, &d);
+        }
     }
 
     // 3) live framebuffer -> display_rect (pre-rotated by the data-driven composite rotation)

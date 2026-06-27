@@ -362,20 +362,23 @@ class Skin:
         return lit
 
     def emit_scene(self, body_ppm, lit_body_ppm, fb_ppm, lit_parts, *, title="", picker=None,
-                   selected=None):
+                   selected=None, hat_dirs=None):
         """The whitespace protocol skin-render.c parses (robust strtok in C):
 
             skin <body_ppm> <lit_body_ppm> <skin_w> <skin_h>
             display <x> <y> <w> <h> <composite_rotation>
             fb <fb_ppm|-> <canvas_w> <canvas_h>
-            part <skin_part> <kind> <x> <y> <w> <h> <lit:0|1>     (one per skin rect)
+            part <skin_part> <kind> <x> <y> <w> <h> <lit:0|1> <hx> <hy>   (one per skin rect)
             picker <manufacturer> <codename> <selected:0|1> <model...>   (model = rest-of-line,
                                                                           may contain spaces)
             title <text...>
 
-        NOTE: paths (body/lit_body/fb) must be space-free (they are, under the sim baseline dir);
-        only <model> and <title> may contain spaces, and both are the rest-of-line.
+        <hx> <hy> are the hat direction (-1/0/1) for a lit d-pad, so the renderer lights ONLY the
+        pressed arm on the bezel (not the whole cross); 0 0 for everything else. NOTE: paths
+        (body/lit_body/fb) must be space-free (they are, under the sim baseline dir); only <model>
+        and <title> may contain spaces, and both are the rest-of-line.
         """
+        hat_dirs = hat_dirs or {}
         lines = [f"skin {body_ppm} {lit_body_ppm} {self.skin_w} {self.skin_h}"]
         x, y, w, h = self.display_rect
         lines.append(f"display {x} {y} {w} {h} {self.composite_rotation()}")
@@ -383,8 +386,9 @@ class Skin:
         lines.append(f"fb {fb} {self.canvas_w} {self.canvas_h}")
         for p in self.ordered_parts():
             rx, ry, rw, rh = p.rect
+            hx, hy = hat_dirs.get(p.name, (0, 0))
             lines.append(f"part {p.name} {p.kind} {rx} {ry} {rw} {rh} "
-                         f"{1 if p.name in lit_parts else 0}")
+                         f"{1 if p.name in lit_parts else 0} {hx} {hy}")
         if picker:
             for man, items in picker.items():
                 for it in items:
