@@ -72,3 +72,25 @@ The `/home/mm` absolute-path coupling is retired from the run path: the `run-*.s
 emit portable hints (the vars are baked in the image), and the container path (`pf-sim` → `check-*.py` →
 `run-in-harness.sh`) reads only image-internal ENV. `grep -rn /home/mm` over the run scripts is clean (only
 documentation comments in the Dockerfile/entrypoint note *what was retired*).
+
+## Interactive `--window` demo (tsp-qc1.5)
+
+The `demo` stage (`docker build --target demo`) adds a **video-capable `skin-render-window`** (SDL3 with
+X11 + the software renderer; `skin/build-sdl3-window.sh`) + Xvfb to the lean base image. `skin/window_driver.py`
+bridges `skin-render --window`'s click stream to the SAME `control_surface.Device` the headless test injects
+through — a live click resolves via the descriptor (`skin_model.tap` → `Action`) exactly as the headless
+inject does, and the control lights on the window. Demo image: 1.21 GB.
+
+**`pf-sim window-selftest` → PASS on both devices** (Xvfb, no display needed):
+```
+a133: live X11 window opened (skin-render-window in its event loop)   +  10 controls lit through the loop
+a523: live X11 window opened (skin-render-window in its event loop)   +  13 controls lit through the loop
+```
+The live X11 window opening is what the offscreen `sdl3-render` lib **cannot** do (it returns NULL).
+**No regression:** `check-skin a133 a523` in the demo image → ALL DEVICES PASS, byte-identical native==qemu-tsp
+(a133 35/35, a523 41/41 frames). The owner runs the live bezel-click demo with `pf-sim window <device>` on a
+host with a real `$DISPLAY`. (Implementation note: `xvfb-run` hangs in this container shape, so the entrypoint
+starts Xvfb directly.)
+
+HONESTY: the live window is upstream SDL3's portable X11 + software path on the **dev host**, NOT the on-device
+graphics; acceptance = the loop runs in the container (`window-selftest`), not an on-panel visual gate.

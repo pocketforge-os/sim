@@ -84,3 +84,32 @@ It is **ADVISORY** first — not a required status check, so a red run does not 
 to BLOCKING** once a133+a523 stay green + stable: add the `headless-suite` job to `main`'s
 branch-protection required checks (Settings → Branches, or
 `gh api -X PUT repos/pocketforge-os/sim/branches/main/protection ...`).
+
+## Interactive `--window` demo (tsp-qc1.5 — the dogfood image)
+
+A laptop-runnable image where you click the live bezel and watch the app light up. The
+[`docker/` `demo` stage](../Dockerfile) adds a **video-capable `skin-render-window`** (X11 + software
+renderer; `skin/build-sdl3-window.sh`) + the X11 client libs + Xvfb to the lean base image. The
+[`window_driver.py`](../skin/window_driver.py) loop bridges `skin-render --window`'s click stream to
+the SAME `control_surface.Device` the headless test injects through — so a live click resolves through
+the descriptor (`skin_model.tap` → `Action`) exactly as the headless inject does ("GUI click ==
+headless inject", live). A picker click switches device.
+
+```bash
+docker build --target demo -t pocketforge-sim:demo .          # base + video SDL3 + Xvfb
+
+# Autonomous proof (no display needed — Xvfb): live X11 window opens + the driver loop lights controls
+docker run --rm --device /dev/uinput --device-cgroup-rule "c 13:* rmw" -v /dev/input:/dev/input \
+  --cap-add SYS_ADMIN --security-opt apparmor=unconfined --security-opt seccomp=unconfined \
+  pocketforge-sim:demo window-selftest a523
+
+# Live demo on a host with a real X display (e.g. the laptop) — click the bezel, watch it light:
+docker run --rm --device /dev/uinput --device-cgroup-rule "c 13:* rmw" -v /dev/input:/dev/input \
+  --cap-add SYS_ADMIN --security-opt apparmor=unconfined --security-opt seccomp=unconfined \
+  -e DISPLAY="$DISPLAY" -v /tmp/.X11-unix:/tmp/.X11-unix \
+  pocketforge-sim:demo window a523
+```
+
+HONESTY: the live window is upstream SDL3's portable X11 + software rasterizer on the **dev host**, NOT
+the on-device sunxifb/PowerVR path. Acceptance is "the loop runs in the container" (the `window-selftest`
+above), **not** an on-panel visual gate — the bezel-click demo is a developer convenience.
