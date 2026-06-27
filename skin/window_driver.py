@@ -109,8 +109,22 @@ class Demo:
 
     # ---- rendering ----
     def _fb_ppm(self):
+        """Snapshot the app fb, then ATOMICALLY publish it under a stable name the scene references.
+
+        `snapshot` overwrites `frames/live.ppm` in place; skin-render reads the scene's fb path on
+        its OWN ~60Hz loop, so reading `live.ppm` directly races the next drag-frame's snapshot
+        mid-write -> a short read -> `read_ppm` returns NULL -> the screen blanks for one frame (the
+        drag "flicker"). `os.replace` is atomic, so skin-render always opens a COMPLETE frame (and a
+        reader that already holds the fd keeps the prior, complete inode). dev._frame is loaded
+        in-memory inside snapshot(), so moving the file doesn't affect the region/slider readback."""
         self.dev.snapshot("live")
-        return os.path.join(self.dev.outdir, "frames", "live.ppm")
+        raw = os.path.join(self.dev.outdir, "frames", "live.ppm")
+        published = os.path.join(self.dev.outdir, "frames", "live_published.ppm")
+        try:
+            os.replace(raw, published)
+            return published
+        except OSError:
+            return raw
 
     def _render(self):
         lit_parts, hat_dirs = set(), {}
@@ -122,8 +136,12 @@ class Demo:
         scene = self.skin.emit_scene(self.body_ppm, self.lit_ppm, self._fb_ppm(), lit_parts,
                                      picker=self.picker, selected=self.device_id,
                                      title=TITLE, hat_dirs=hat_dirs)
-        with open(self.scene_path, "w") as f:
+        # Install the scene atomically too: a torn scene parse (skin_w==0) makes skin-render DROP the
+        # reload, so a half-written scene.txt would silently stall updates mid-drag.
+        tmp = self.scene_path + ".tmp"
+        with open(tmp, "w") as f:
             f.write(scene)
+        os.replace(tmp, self.scene_path)
         if self.proc and self.proc.poll() is None:
             self.proc.stdin.write(f"reload {self.scene_path}\n")
             self.proc.stdin.flush()
