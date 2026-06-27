@@ -71,6 +71,25 @@ COPY harness /src/harness
 RUN OUT=/rootfs SDLSRC=/sdl3/SDL /src/harness/build-harness.sh
 # -> /rootfs/rootfs-arm64 (arm64 bookworm + /usr/local libSDL3.so vendored)
 
+# ───────────────────────────── SDL3-window (X11, software; the live --window demo, tsp-qc1.5) ─────────────────────────────
+# Video-capable SDL3 (X11 ON, software renderer, GL/Vulkan/Wayland OFF) — opens a REAL window for
+# the interactive skin demo. x86 only (the GUI runs on the host; the app inside still uses the
+# offscreen sdl3-render under qemu-tsp). DEV convenience, NOT a CI/acceptance artifact.
+FROM toolchain AS sdl3-window
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      libx11-dev libxext-dev libxcursor-dev libxi-dev libxrandr-dev libxfixes-dev \
+      libxss-dev libxinerama-dev libxtst-dev libxkbcommon-dev \
+    && rm -rf /var/lib/apt/lists/*
+COPY sdl3 /src/sdl3
+COPY skin /src/skin
+# build the video SDL3 lib AND the skin-render-window binary HERE (this stage is only built for the
+# `demo` target, so the lean runtime/CI build never drags in the X11 SDL3 build).
+RUN OUT=/sdl3-window SRC=/sdl3-window/SDL /src/skin/build-sdl3-window.sh && \
+    gcc -O2 -I/sdl3-window/x86/include \
+        -o /skin-render-window /src/skin/skin-render.c \
+        /sdl3-window/x86/lib/libSDL3.a -lm -ldl -lpthread -lrt && \
+    file /skin-render-window
+
 # ───────────────────────────── apps (hwprobe-lite x86 + static arm64; skin-render) ─────────────────────────────
 # -ffp-contract=off: the sensor path needs it for native==qemu byte-identical FP; harmless (stricter)
 # for the control/skin paths. ONE baked binary serves check-control + check-sensor + check-skin.
@@ -135,3 +154,22 @@ COPY docker/entrypoint.sh /usr/local/bin/pf-sim
 RUN chmod +x /usr/local/bin/pf-sim
 ENTRYPOINT ["/usr/local/bin/pf-sim"]
 CMD ["check-control", "a133", "a523"]
+
+# ───────────────────────────── demo (tsp-qc1.5; the interactive --window dogfood image) ─────────────────────────────
+# Extends the lean runtime with the video-capable skin-render-window (X11) + the X11 client libs it
+# dlopens + Xvfb (for the headless --self-test and a no-display fallback). Build with:
+#   docker build --target demo -t pocketforge-sim:demo .
+# Run live on a host with a real display:  (see docker/README.md "Interactive demo")
+#   docker run --rm <caps> -e DISPLAY=$DISPLAY -v /tmp/.X11-unix:/tmp/.X11-unix pocketforge-sim:demo window a523
+# The base `pocketforge-sim` (default target) stays lean for CI. HONESTY: the live window is upstream
+# SDL3's X11+software path on the dev host, NOT the on-device graphics; acceptance = the loop runs.
+FROM runtime AS demo
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      libx11-6 libxext6 libxcursor1 libxi6 libxrandr2 libxfixes3 \
+      libxss1 libxinerama1 libxtst6 libxkbcommon0 \
+      xvfb xauth \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=sdl3-window /skin-render-window /opt/pf/apps/skin-render-window
+ENV SKIN_RENDER_WINDOW=/opt/pf/apps/skin-render-window
+CMD ["window-selftest", "a523"]
