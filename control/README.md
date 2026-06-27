@@ -14,7 +14,7 @@ the API bolted onto a GUI.
 from control_surface import Device
 with Device("a133", PLATFORM, launcher="qemu") as dev:        # uinput + virtual fb0, qemu-tsp app, NO crun
     dev.press("south");           assert dev.framebuffer_region("south").is_red()
-    dev.set_axis("ltrig", 0.5);   assert dev.slider("ltrig").at(0.5)
+    dev.press("ltrig");           assert dev.framebuffer_region("ltrig").is_red()  # digital L2
     dev.assert_capability_absent("imu")                       # a133 has no IMU
 ```
 

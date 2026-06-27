@@ -20,7 +20,7 @@ The headline contract this makes real, verbatim, on BOTH descriptors, zero per-d
 
     with Device("a133", platform_dir, launcher="qemu") as dev:
         dev.press("south");            assert dev.framebuffer_region("south").is_red()
-        dev.set_axis("ltrig", 0.5);    assert dev.slider("ltrig").at(0.5)
+        dev.press("ltrig");            assert dev.framebuffer_region("ltrig").is_red()  # digital L2
         dev.assert_capability_absent("imu")     # a133 has no IMU; a523 -> present
 
 Run under sudo (uinput + the bound /dev/input event nodes are root-only). Launcher "qemu" runs
