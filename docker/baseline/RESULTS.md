@@ -55,3 +55,20 @@ Identical to the E5 host baselines (a133 35/35, a523 41/41 control frames; a523 
 clean image with **zero hand-staged artifacts**. The bwrap+qemu-tsp+uinput launcher nests cleanly with a
 scoped (non-`--privileged`) run; no persistent host change required. HONESTY CONTRACT unchanged: this proves
 the **logical layer only**; GPU/WiFi/timing/enforcement/per-SoC graphics stay the hardware gate's authority.
+
+## Portability — second host (tsp-qc1.3)
+
+The `pf-sim` entrypoint runs the suite **identically on any host** from the baked image-internal ENV (no
+`/home/mm`, no host env-var setup). Proven on a **second host** — the laptop (matt-laptop, Docker 29.1.3):
+
+- **Run-only** (image transferred `docker save | gzip | docker load` from modelmaker): `check-control` and
+  `check-sensor` for `a133 a523` → **ALL DEVICES PASS**, byte-identical native==qemu-tsp (a133 35/35,
+  a523 41/41 frames; a523 6 IMU replies) — identical to the modelmaker run.
+- **Build-from-clean** (same Dockerfile + pins, built on the laptop with buildx 0.30.1): produces an
+  equivalent working image; the suite passes identically. This is the full *reproducible-from-clean on ANY
+  host* claim, not just *runs on the one box where someone hand-staged it*.
+
+The `/home/mm` absolute-path coupling is retired from the run path: the `run-*.sh` host-dev wrappers now
+emit portable hints (the vars are baked in the image), and the container path (`pf-sim` → `check-*.py` →
+`run-in-harness.sh`) reads only image-internal ENV. `grep -rn /home/mm` over the run scripts is clean (only
+documentation comments in the Dockerfile/entrypoint note *what was retired*).

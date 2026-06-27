@@ -15,10 +15,10 @@
 #   DEVICES   space-separated device ids                                (default "a133 a523")
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-QEMU_TSP="${QEMU_TSP:?set QEMU_TSP=/home/mm/qemu-tsp/build/qemu-tsp/qemu-aarch64}"
-SDLR="${SDLR:?set SDLR=/home/mm/sim-build/sdl3-render}"
-ROOTFS="${ROOTFS:?set ROOTFS=/home/mm/sim-build/harness/rootfs-arm64}"
-PLATFORM="${PLATFORM:?set PLATFORM=/home/mm/platform}"
+QEMU_TSP="${QEMU_TSP:?set QEMU_TSP (baked in the pocketforge-sim image; see docker/README.md)}"
+SDLR="${SDLR:?set SDLR (baked in the pocketforge-sim image)}"
+ROOTFS="${ROOTFS:?set ROOTFS (baked in the pocketforge-sim image)}"
+PLATFORM="${PLATFORM:?set PLATFORM (baked in the pocketforge-sim image)}"
 DEVICES="${DEVICES:-a133 a523}"
 HARNESS="$HERE/../harness/run-in-harness.sh"
 OUT="$HERE/baseline"; mkdir -p "$OUT"
