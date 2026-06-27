@@ -228,21 +228,21 @@ static int any_key(const struct ctl *c) {
     return 0;
 }
 
-// D-pad: a directional cross. The active direction's arm + the centre hub light; the hub
-// guarantees the region-sample at the rect centre is red iff the hat is deflected (any dir).
+// D-pad: a directional cross. ONLY the pressed direction's arm lights (no always-on centre
+// hub). Each lit arm extends THROUGH the centre square, so the region-sample at the rect centre
+// is red iff a direction is pressed — keeping the .5/.6 assertion valid without a separate hub.
 static void render_hat(SDL_Renderer *r, struct ctl *c) {
     int hx = (int)axis_norm(c, 'x'), hy = (int)axis_norm(c, 'y');
     int hxs = hx > 0 ? 1 : hx < 0 ? -1 : 0, hys = hy > 0 ? 1 : hy < 0 ? -1 : 0;
-    int t = c->w / 3 < c->h / 3 ? c->w / 3 : c->h / 3;       // arm thickness
+    int t = c->w / 3 < c->h / 3 ? c->w / 3 : c->h / 3, hl = t / 2;
+    int x0 = c->x, y0 = c->y, x1 = c->x + c->w, y1 = c->y + c->h;
     int cx = c->x + c->w / 2, cy = c->y + c->h / 2, g = 70, R = 220, D = 30;
-    fill(r, cx - t / 2, c->y, t, c->h, g, g, g);             // vertical bar
-    fill(r, c->x, cy - t / 2, c->w, t, g, g, g);             // horizontal bar
-    if (hxs > 0) fill(r, cx, cy - t / 2, c->w / 2, t, R, D, D);          // right
-    if (hxs < 0) fill(r, c->x, cy - t / 2, c->w / 2, t, R, D, D);        // left
-    if (hys > 0) fill(r, cx - t / 2, cy, t, c->h / 2, R, D, D);          // down
-    if (hys < 0) fill(r, cx - t / 2, c->y, t, c->h / 2, R, D, D);        // up
-    int on = hxs || hys;
-    fill(r, cx - t / 2, cy - t / 2, t, t, on ? R : g, on ? D : g, on ? D : g);  // centre hub
+    fill(r, cx - hl, y0, t, c->h, g, g, g);                  // vertical bar (gray base)
+    fill(r, x0, cy - hl, c->w, t, g, g, g);                  // horizontal bar (gray base)
+    if (hxs > 0) fill(r, cx - hl, cy - hl, x1 - (cx - hl), t, R, D, D);  // right (incl. centre)
+    if (hxs < 0) fill(r, x0, cy - hl, (cx + hl) - x0, t, R, D, D);       // left  (incl. centre)
+    if (hys > 0) fill(r, cx - hl, cy - hl, t, y1 - (cy - hl), R, D, D);  // down  (incl. centre)
+    if (hys < 0) fill(r, cx - hl, y0, t, (cy + hl) - y0, R, D, D);       // up    (incl. centre)
 }
 
 // Analog stick: a calibration box. A vector from centre to the deflection position shows HOW
