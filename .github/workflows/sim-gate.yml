@@ -28,9 +28,6 @@ jobs:
     timeout-minutes: 45
     env:
       IMG: pocketforge-sim:ci-${{ github.run_id }}
-      CAPS: >-
-        --device /dev/uinput --device-cgroup-rule c\ 13:*\ rmw -v /dev/input:/dev/input
-        --cap-add SYS_ADMIN --security-opt apparmor=unconfined --security-opt seccomp=unconfined
     steps:
       - uses: actions/checkout@v4
 
