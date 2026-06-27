@@ -1,0 +1,10 @@
+# Keep the build context lean + reproducible: exclude VCS, regenerable baselines, build outputs.
+.git
+**/baseline/
+**/build/
+sdl3/SDL/
+**/__pycache__/
+**/*.pyc
+*.img
+*.img.xz
+docker/baseline/

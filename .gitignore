@@ -1,3 +1,7 @@
+# tsp-qc1.1 container build: the PRIVATE platform repo is vendored into the build context as a
+# pinned `git archive` (docker/platform.pin records repo+commit). It is a build INPUT, not source —
+# never commit it (same model as vendor blobs / wifi.txt). Must still reach `docker build`.
+platform-pinned.tar
 # Build outputs + vendored upstream clones (all reproducible from pins).
 sdl3/build/
 harness/build/

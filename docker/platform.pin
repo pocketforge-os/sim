@@ -1,0 +1,11 @@
+# Pinned platform descriptor source for the pocketforge-sim image (reproducibility anchor).
+# platform is a PRIVATE repo, so its content is vendored into the build as a pinned `git archive`
+# (platform-pinned.tar in the build context) rather than cloned from clean — the same provenance
+# model the device image uses for vendor blobs (LOCAL_BLOBS). Regenerate with:
+#   git -C <platform-checkout> archive --format=tar <commit> > platform-pinned.tar
+repo   = https://github.com/pocketforge-os/platform.git
+commit = 716e350ed9e1fb50ebbfde113d5c2d1c8a522822
+ref    = origin/main
+# Descriptor SHA-256 at this commit (== modelmaker /home/mm/platform, the E5 baseline source):
+#   devices/a133/capabilities.toml fb73b2b8237b216dd6882d674311765b413dcf76d18ea4b3ea6fc65b0368bf10
+#   devices/a523/capabilities.toml 7b9a30796a878abf1c4ed115cb447c649109a25c6dca88902f2ca33fbdf083f2
