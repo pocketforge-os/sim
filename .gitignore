@@ -16,3 +16,8 @@ __pycache__/
 # Keep only baseline/<dev>/*.png + baseline/RESULTS.md.
 control/baseline/*/native/
 control/baseline/*/qemu/
+# tsp-an4.6 skin: per-launcher working dirs (PPMs, scenes, frames, body/lit PPMs) are regenerable.
+# Keep only skin/baseline/<dev>/avd_*.png + skin/baseline/RESULTS.md. The built renderer too.
+skin/baseline/*/native/
+skin/baseline/*/qemu/
+skin/skin-render
