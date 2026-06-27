@@ -1,0 +1,5 @@
+opened evdev node /dev/input/event2
+layout: canvas 1280x720, 14 controls, 1 nodes
+tsp-osr-pin: OK window(no-GL)+SDL_CreateRenderer("software") -> 'software'
+virtual fb: memfd 1280x720 (3686400 bytes)
+ready: awaiting commands

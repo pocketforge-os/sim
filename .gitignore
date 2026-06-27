@@ -12,3 +12,7 @@ SDL/
 fb/build.log
 __pycache__/
 *.pyc
+# tsp-an4.5 control: per-launcher working dirs (PPMs, FIFOs, app logs) are regenerable.
+# Keep only baseline/<dev>/*.png + baseline/RESULTS.md.
+control/baseline/*/native/
+control/baseline/*/qemu/

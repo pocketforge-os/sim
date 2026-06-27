@@ -290,7 +290,12 @@ class Synth:
 
     # --- injection primitives (the C5 control-surface foundation) ---
     def _emit(self, role, etype, code, value):
-        os.write(self._fds[role], struct.pack("<llHHi", 0, 0, etype, code, value))
+        # struct input_event on a 64-bit kernel = timeval{__kernel_long_t sec, usec} (8+8) +
+        # u16 type + u16 code + s32 value = 24 bytes. Pack the time fields as 8-byte ("q"):
+        # "<llHHi" would force STANDARD-size l=4 -> a 16-byte event -> the kernel rejects the
+        # write with EINVAL (count < sizeof(input_event)). [fixed tsp-an4.5: .3 shipped this
+        # primitive but never exercised the inject path — its check only probed advertised codes.]
+        os.write(self._fds[role], struct.pack("<qqHHi", 0, 0, etype, code, value))
 
     def _syn(self, role):
         self._emit(role, ec.EV["EV_SYN"], ec.SYN["SYN_REPORT"], 0)
@@ -334,6 +339,21 @@ class Synth:
             raise ValueError(f"'{input_id}' is not a hat")
         self._emit(r["role"], ec.EV["EV_ABS"], r["codes"][0], int(x))
         self._emit(r["role"], ec.EV["EV_ABS"], r["codes"][1], int(y))
+        self._syn(r["role"])
+
+    def set_stick(self, input_id, x, y, normalized=True):
+        """Drive a 2-axis analog stick. normalized: x,y in -1..1 (0 = centre) scaled across
+        each axis's descriptor min..max (raw evdev value otherwise). The control-surface (C5)
+        and GUI (C6) injection primitive for sticks; complements set_axis (single axis)."""
+        r = self._r(input_id)
+        if r["kind"] != "stick" or len(r["codes"]) != 2:
+            raise ValueError(f"'{input_id}' is not a 2-axis stick")
+        for code, name, v in zip(r["codes"], r["code_names"], (x, y)):
+            if normalized:
+                mn, mx, _, _ = r["ranges"][name]
+                centre = (mn + mx) / 2.0
+                v = int(round(centre + max(-1.0, min(1.0, v)) * (mx - mn) / 2.0))
+            self._emit(r["role"], ec.EV["EV_ABS"], code, int(v))
         self._syn(r["role"])
 
     def destroy(self):
