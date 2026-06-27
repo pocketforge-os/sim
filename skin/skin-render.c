@@ -20,8 +20,14 @@
 //
 // Modes:
 //   --shot OUT.ppm        offscreen software-render the scene -> PPM (the proof + owner artifact)
-//   --window              open a live window, redraw on "reload\n" (stdin), emit clicks to stdout
-//                         as  "click <skin_x> <skin_y>"  or  "pick <device_id>"  (driver applies)
+//   --window              open a live window, redraw on "reload\n" (stdin), emit mouse events to
+//                         stdout for the driver to apply. The protocol (tsp-qc1.6) is press/release
+//                         aware so the driver can HOLD a control lit only while the button is down,
+//                         CHORD, and disambiguate a stick TAP from a DRAG:
+//                            down <skin_x> <skin_y>      (bezel press; left button went down)
+//                            motion <skin_x> <skin_y>    (left button held + moved -> a drag)
+//                            up <skin_x> <skin_y>        (release; ends the gesture)
+//                            pick <codename>             (picker-panel click; emitted on down only)
 // Scene comes from --scene FILE or stdin (the protocol skin_model.emit_scene writes).
 //
 // Build: against the sim's SDL3-render (fb/build-sdl3-render.sh). Font is the committed,
@@ -329,29 +335,48 @@ int main(int argc, char **argv) {
     // ----- live --window (tsp-osr-safe: non-GL window + forced software renderer) -----
     SDL_SetHint(SDL_HINT_RENDER_DRIVER, "software");
     if (!SDL_Init(SDL_INIT_VIDEO)) { fprintf(stderr, "SDL_Init: %s\n", SDL_GetError()); return 3; }
-    SDL_Window *win = SDL_CreateWindow("PocketForge — Virtual Device", W, H, 0);  // no GL
+    // ASCII hyphen (NOT an em-dash): the WM title + the on-canvas font8x13 have no U+2014 glyph,
+    // so a "—" renders as mojibake (tsp-qc1.6 finding #1). The driver's scene `title` matches.
+    SDL_Window *win = SDL_CreateWindow("PocketForge - Virtual Device", W, H, 0);  // no GL
     SDL_Renderer *r = win ? SDL_CreateRenderer(win, "software") : NULL;
     if (!r) { fprintf(stderr, "FAIL window/renderer: %s\n", SDL_GetError()); return 3; }
     render_scene(r, &sc, show_outline);
     SDL_RenderPresent(r);
     fprintf(stderr, "skin-render: window up (%dx%d); click=stdout, 'reload'/'quit' on stdin\n", W, H);
 
-    // stdin is read non-blocking-ish via the event loop's timeout; clicks go to stdout.
+    // stdin is read non-blocking-ish via the event loop's timeout; mouse events go to stdout.
     int running = 1;
     while (running) {
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
             if (e.type == SDL_EVENT_QUIT) running = 0;
-            else if (e.type == SDL_EVENT_MOUSE_BUTTON_DOWN) {
+            else if (e.type == SDL_EVENT_MOUSE_BUTTON_DOWN
+                     && e.button.button == SDL_BUTTON_LEFT) {
                 int ox = bezel_ox(&sc);
                 int mx = (int)e.button.x, my = (int)e.button.y;
-                if (ox && mx < PANEL_W) {                  // a picker click
+                if (ox && mx < PANEL_W) {                  // a picker click (on DOWN only)
                     int idx = (my - 98) / 70;
                     if (idx >= 0 && idx < sc.npicks)
                         printf("pick %s\n", sc.picks[idx].code), fflush(stdout);
-                } else {                                   // a bezel click -> skin space
-                    printf("click %d %d\n", mx - ox, my); fflush(stdout);
+                } else {                                   // a bezel press -> skin space
+                    printf("down %d %d\n", mx - ox, my); fflush(stdout);
                 }
+            }
+            else if (e.type == SDL_EVENT_MOUSE_BUTTON_UP
+                     && e.button.button == SDL_BUTTON_LEFT) {
+                // release ends the gesture; the driver releases on up (HOLD semantics). Picker
+                // panel clicks have no release, so skip a release that lands inside the panel.
+                int ox = bezel_ox(&sc);
+                int mx = (int)e.button.x, my = (int)e.button.y;
+                if (!(ox && mx < PANEL_W)) { printf("up %d %d\n", mx - ox, my); fflush(stdout); }
+            }
+            else if (e.type == SDL_EVENT_MOUSE_MOTION
+                     && (e.motion.state & SDL_BUTTON_LMASK)) {
+                // a DRAG: left button held + pointer moved. Only the bezel region maps to skin
+                // space; ignore motion over the picker panel (no analog gesture there).
+                int ox = bezel_ox(&sc);
+                int mx = (int)e.motion.x, my = (int)e.motion.y;
+                if (!(ox && mx < PANEL_W)) { printf("motion %d %d\n", mx - ox, my); fflush(stdout); }
             }
         }
         // drain any driver commands on stdin (reload <file> / quit)

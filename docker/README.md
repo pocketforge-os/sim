@@ -87,13 +87,28 @@ branch-protection required checks (Settings → Branches, or
 
 ## Interactive `--window` demo (tsp-qc1.5 — the dogfood image)
 
-A laptop-runnable image where you click the live bezel and watch the app light up. The
+A laptop-runnable image where you press the live bezel and watch the app light up. The
 [`docker/` `demo` stage](../Dockerfile) adds a **video-capable `skin-render-window`** (X11 + software
 renderer; `skin/build-sdl3-window.sh`) + the X11 client libs + Xvfb to the lean base image. The
-[`window_driver.py`](../skin/window_driver.py) loop bridges `skin-render --window`'s click stream to
-the SAME `control_surface.Device` the headless test injects through — so a live click resolves through
-the descriptor (`skin_model.tap` → `Action`) exactly as the headless inject does ("GUI click ==
-headless inject", live). A picker click switches device.
+[`window_driver.py`](../skin/window_driver.py) loop bridges `skin-render --window`'s mouse-event
+stream to the SAME `control_surface.Device` the headless test injects through — so a live press
+resolves through the descriptor (`skin_model.tap` / `.drag` → `Action`) exactly as the headless inject
+does ("GUI click == headless inject", live). A picker click switches device.
+
+**Interaction model (tsp-qc1.6).** The renderer emits a press/release-aware protocol
+(`down`/`motion`/`up`, plus `pick` on a panel click), so:
+
+- **Hold to light.** A control is lit only *while the mouse button is held* — release and it goes
+  dark (not "stays lit until the next click").
+- **Press vs drag on a stick.** A quick tap on a thumbstick is the **L3/R3 stick-click** (a523 only;
+  a133's sticks carry no stick-click row, so a tap is an honest no-op). Hold-and-drag **moves the
+  stick** (`set_stick`) — the deflection shows live in the composited app framebuffer.
+- **Triggers** slide to the clicked fraction and follow a drag (the analog `set_axis` slider).
+- **Chording.** The driver no longer force-deactivates the previously-pressed control, so
+  `control_surface` can hold several inputs at once (the headless suite + `window-selftest` exercise
+  a two-button chord). A **single physical mouse can only issue one `down` at a time**, so the live
+  GUI shows one held control — that is a limit of the input device, not of the model (a scripted or
+  multi-touch front-end could drive a true chord).
 
 ```bash
 docker build --target demo -t pocketforge-sim:demo .          # base + video SDL3 + Xvfb
