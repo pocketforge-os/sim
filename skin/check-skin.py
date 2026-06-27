@@ -250,7 +250,7 @@ def run_device(device_id, platform_dir, launcher, outdir, apps, do_render):
                 ("dpad_right", lambda: dev.move_hat("dpad", 1, 0),        {"dpad"},      "D-pad RIGHT", (1, 0)),
                 ("lstick_diag", lambda: dev.set_stick("lstick", 0.7, -0.7), {"stick_l"}, "L-stick up-right", (0, 0)),
                 ("south_press", lambda: dev.press("south"),              {"btn_south"}, "A pressed", (0, 0)),
-                ("ltrig_half", lambda: dev.set_axis("ltrig", 0.5),       {"trig_l"},    "L-trigger 50%", (0, 0)),
+                ("ltrig_press", lambda: dev.press("ltrig"),              {"trig_l"},    "L2 pressed (digital)", (0, 0)),
             ]
             if dev.has_input("l3"):   # a523 only: the stick PRESSED (L3) — a133 omits the row
                 gallery.append(("l3_press", lambda: dev.press("l3"), {"stick_l"},

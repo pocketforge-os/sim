@@ -8,17 +8,19 @@ asserts the headline contract plus the full input/capability matrix:
 
   HEADLINE (verbatim, auto-snapshot):
     dev.press("south");          assert dev.framebuffer_region("south").is_red()
-    dev.set_axis("ltrig", 0.5);  assert dev.slider("ltrig").at(0.5)
+    dev.press("ltrig");          assert dev.framebuffer_region("ltrig").is_red()  # digital L2
     dev.assert_capability_absent("imu")            # a133; a523 -> assert present
 
   MATRIX (generic over [[inputs]]):
     * every digital control: press -> its region lights, a DIFFERENT region stays dark;
       release -> clears. (Proves the id->code->event->decode->render binding end-to-end
-      through real uinput->evdev->qemu-tsp, not faked host-side.)
+      through real uinput->evdev->qemu-tsp, not faked host-side.) The TrimUI L2/R2 are DIGITAL
+      buttons (tsp-5p1), so they ride this same path -> press lights trig_l/trig_r, release clears.
     * d-pad hat: deflect -> lit; centre -> dark.
     * analog stick: deflect past deadzone -> lit; centre -> dark.
-    * analog trigger: sweep 0..1 -> slider fill tracks the value monotonically (scaled across
-      the descriptor min..max).
+    * analog trigger (latent, descriptor-driven): a kind=trigger row would sweep 0..1 as a slider;
+      neither TrimUI model declares one (their L2/R2 are digital), so the sweep loop below is inert
+      for a133/a523 but kept for a future analog-trigger variant — pure DATA, zero code change.
     * ABSENT controls (a133 home/l3/r3): typed hardware-absent, NEVER a crash.
     * pose / capability: set_pose works iff the descriptor has an IMU, else hardware-absent;
       privacy caps (location) are denied by the cooperative facade.
@@ -65,9 +67,10 @@ def headline(dev, c):
     dev.press("south")
     c.chk(dev.framebuffer_region("south").is_red(), 'press("south") -> framebuffer_region("south").is_red()')
     dev.release("south")
-    dev.set_axis("ltrig", 0.5)
-    c.chk(dev.slider("ltrig").at(0.5), 'set_axis("ltrig",0.5) -> slider("ltrig").at(0.5)')
-    dev.set_axis("ltrig", 0.0)
+    # L2/R2 are DIGITAL on the TrimUI models (tsp-5p1) -> press/release, NOT an analog set_axis slider.
+    dev.press("ltrig")
+    c.chk(dev.framebuffer_region("ltrig").is_red(), 'press("ltrig") -> framebuffer_region("ltrig").is_red() [digital L2]')
+    dev.release("ltrig")
     if dev.broker.is_present("imu"):
         c.chk(dev.assert_capability_present("imu"), 'assert_capability_present("imu") [a523]')
     else:
