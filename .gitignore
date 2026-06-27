@@ -21,3 +21,7 @@ control/baseline/*/qemu/
 skin/baseline/*/native/
 skin/baseline/*/qemu/
 skin/skin-render
+# tsp-an4.7 sensor: per-launcher working dirs (synth IIO trees, FIFOs, app logs) are regenerable.
+# Keep only sensor/baseline/sensor-evidence.json + sensor/baseline/RESULTS.md.
+sensor/baseline/*/native/
+sensor/baseline/*/qemu/

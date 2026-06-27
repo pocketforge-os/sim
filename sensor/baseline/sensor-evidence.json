@@ -1,0 +1,26 @@
+{
+  "a133": {
+    "native_replies": {},
+    "parity_mismatch": [],
+    "qemu_replies": {}
+  },
+  "a523": {
+    "native_replies": {
+      "pitch+30": "imu qmi8658 0 4903 8492 0 0 0",
+      "pitch20roll15": "imu qmi8658 -2538 3239 8902 0 0 0",
+      "rest": "imu qmi8658 0 0 9807 0 0 0",
+      "roll-20": "imu qmi8658 3354 0 9215 0 0 0",
+      "spin": "imu qmi8658 0 0 9807 873 -524 175",
+      "yaw90": "imu qmi8658 0 3354 9215 0 0 0"
+    },
+    "parity_mismatch": [],
+    "qemu_replies": {
+      "pitch+30": "imu qmi8658 0 4903 8492 0 0 0",
+      "pitch20roll15": "imu qmi8658 -2538 3239 8902 0 0 0",
+      "rest": "imu qmi8658 0 0 9807 0 0 0",
+      "roll-20": "imu qmi8658 3354 0 9215 0 0 0",
+      "spin": "imu qmi8658 0 0 9807 873 -524 175",
+      "yaw90": "imu qmi8658 0 3354 9215 0 0 0"
+    }
+  }
+}

@@ -17,6 +17,12 @@ BIN="${1:?usage: run-in-harness.sh <arm64-binary> [args...]}"; shift || true
 EXTRA=()
 [ -n "${OUT_BIND:-}" ] && EXTRA+=(--bind "$OUT_BIND" /out)
 
+# Optional VIRTUAL IIO SENSOR (tsp-an4.7): IIO_BIND=<hostdir> exposes the descriptor-synthesized
+# IIO tree at the honest ABI path /sys/bus/iio/devices, so the app reads the injected accel/gyro
+# indistinguishably from the real qmi8658 (plain sysfs read(), no ioctl). a133 (no imu) -> the
+# host passes an empty dir -> the app's scan finds nothing -> typed hardware-absent.
+[ -n "${IIO_BIND:-}" ] && EXTRA+=(--ro-bind "$IIO_BIND" /sys/bus/iio/devices)
+
 exec bwrap \
   --bind "$ROOTFS" / \
   --proc /proc \

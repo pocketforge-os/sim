@@ -15,7 +15,19 @@ That stays the hardware/substrate gate's authority.
 Capability presence is DERIVED FROM THE DESCRIPTOR (zero per-device code): a sensor/actuator row
 present => the capability exists; omitted => it is hardware-absent. So a133 (no [[sensors]]) and
 a523 (qmi8658 imu) differ only by descriptor data.
+
+tsp-an4.7 grows this stub into the full sensor/pose path: ``set_pose`` now drives a SINGLE
+physical model (``sensor/physical_model.PhysicalModel``) whose derived accel/gyro the control
+surface writes into a synthesized virtual IIO device the app reads; and a unified rumble/haptics
+NO-OP SHAPE makes "absent motor" (a133) and "accessibility hapticsEnabled off" (a523, E4) the
+SAME typed no-op — a handle whose ``pulse()`` returns a status and NEVER crashes.
 """
+import math
+import os
+import sys
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "sensor"))
+from physical_model import PhysicalModel   # noqa: E402  (the .7 single physical model)
 
 
 class HardwareAbsent(Exception):
@@ -70,11 +82,38 @@ _CAP_PRESENCE = {
 _DEFAULT_DENY = {"location", "gnss"}
 
 
+# Unified no-op SHAPE (epic acceptance + E4 unification): an actuator call ALWAYS returns a typed
+# status and NEVER raises. "no motor on this descriptor" (a133) and "user disabled hapticsEnabled"
+# (a523, E4 accessibility) collapse into the SAME no-op — only the reason differs.
+RUMBLE_FIRED = "fired"               # motor present AND preference enabled -> would actuate
+RUMBLE_NOOP_ABSENT = "noop-absent"   # descriptor advertises no rumble motor (a133)
+RUMBLE_NOOP_SUPPRESSED = "noop-suppressed"  # motor present but hapticsEnabled == False (E4)
+
+
+class RumbleHandle:
+    """A cosmetic-no-op-tier handle (briefing §A four-way taxonomy). ``pulse`` succeeds and returns
+    a status whether or not anything actually buzzes — the app does not special-case absence."""
+
+    def __init__(self, present, haptics_enabled):
+        self.present = present
+        self.haptics_enabled = haptics_enabled
+
+    def pulse(self, ms=40):
+        if not self.present:
+            return RUMBLE_NOOP_ABSENT
+        if not self.haptics_enabled:
+            return RUMBLE_NOOP_SUPPRESSED
+        return RUMBLE_FIRED          # honesty: SIM does not actuate silicon; real buzz is hw-gated
+
+
 class BrokerStub:
     def __init__(self, desc):
         self.desc = desc
-        self._pose = None
-        self._caps = {}   # name -> last set value (cooperative state)
+        self.model = PhysicalModel()      # the ONE rigid-body state behind the IMU
+        self._has_pose = False
+        self._caps = {}                   # name -> last set value (cooperative state)
+        # accessibility preferences the broker reads + enforces at the primitive (E4). Default on.
+        self.prefs = {"hapticsEnabled": True}
 
     # --- presence (descriptor-derived) ---
     def is_present(self, name):
@@ -85,17 +124,48 @@ class BrokerStub:
         """Present hardware AND not policy-denied (cooperative facade)."""
         return self.is_present(name) and name.lower() not in _DEFAULT_DENY
 
+    # --- accessibility / user preferences (E4) ---
+    def set_preference(self, name, value):
+        self.prefs[name] = value
+        return value
+
+    def get_preference(self, name, default=None):
+        return self.prefs.get(name, default)
+
     # --- sensors / pose (AVD setPhysicalModel style, single physical model) ---
-    def set_pose(self, yaw=0.0, pitch=0.0, roll=0.0, x=0.0, y=0.0, z=0.0):
+    # Orientation in DEGREES, angular velocity in deg/s (human/UI units); the model holds radians.
+    def set_pose(self, yaw=None, pitch=None, roll=None, x=None, y=None, z=None,
+                 wx=None, wy=None, wz=None):
         if not self.is_present("imu"):
             raise HardwareAbsent("imu", "descriptor advertises no accel/gyro sensor")
-        self._pose = {"yaw": yaw, "pitch": pitch, "roll": roll, "x": x, "y": y, "z": z}
-        return self._pose
+        d2r = math.radians
+        self.model.set(
+            yaw=None if yaw is None else d2r(yaw),
+            pitch=None if pitch is None else d2r(pitch),
+            roll=None if roll is None else d2r(roll),
+            x=x, y=y, z=z,
+            wx=None if wx is None else d2r(wx),
+            wy=None if wy is None else d2r(wy),
+            wz=None if wz is None else d2r(wz),
+        )
+        self._has_pose = True
+        return self.get_pose()
 
     def get_pose(self):
+        """Pose in the human/UI units set_pose accepts (degrees, deg/s) — the model is radians."""
         if not self.is_present("imu"):
             raise HardwareAbsent("imu")
-        return self._pose
+        s = self.model.state()
+        r2d = math.degrees
+        return {"yaw": r2d(s["yaw"]), "pitch": r2d(s["pitch"]), "roll": r2d(s["roll"]),
+                "x": s["x"], "y": s["y"], "z": s["z"],
+                "wx": r2d(s["wx"]), "wy": r2d(s["wy"]), "wz": r2d(s["wz"])}
+
+    # --- actuators: rumble/haptics (unified no-op shape; E4 preference-gated) ---
+    def acquire_rumble(self):
+        """Always returns a handle (cosmetic-no-op tier). Present iff the descriptor has a rumble
+        actuator; gated by the hapticsEnabled accessibility preference. NEVER raises."""
+        return RumbleHandle(self.is_present("rumble"), bool(self.prefs.get("hapticsEnabled", True)))
 
     # --- generic capability set/get (cooperative) ---
     def set_capability(self, name, value):

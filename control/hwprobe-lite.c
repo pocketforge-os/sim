@@ -23,7 +23,9 @@
 //
 // Usage: hwprobe-lite <io-dir>   (reads <io-dir>/layout.txt, <io-dir>/req, <io-dir>/resp)
 #include <SDL3/SDL.h>
+#include <dirent.h>
 #include <fcntl.h>
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -297,6 +299,97 @@ static void render(SDL_Renderer *r) {
     SDL_RenderPresent(r);
 }
 
+// ---- virtual IIO sensor read (tsp-an4.7): read the injected accel/gyro off the synthesized
+// IIO device EXACTLY as the on-device facade would — scan $PF_IIO_ROOT for the descriptor's
+// iio_device by name, read in_<chan>_{x,y,z}_raw + in_<chan>_scale + in_<chan>_mount_matrix, then
+// recover the DEVICE frame: value_dev = M . (raw * scale). Plain sysfs read() (no ioctl). The app
+// genuinely CONSUMES scale + the descriptor mount_matrix (read, never hard-coded). -ffp-contract=off
+// keeps the float maths bit-identical x86<->arm64 so native==qemu frames stay byte-identical. ----
+static int iio_slurp(const char *path, char *buf, int cap) {
+    int fd = open(path, O_RDONLY);
+    if (fd < 0) return -1;
+    int n = (int)read(fd, buf, cap - 1);
+    close(fd);
+    if (n < 0) n = 0;
+    while (n > 0 && (buf[n-1] == '\n' || buf[n-1] == ' ' || buf[n-1] == '\t')) n--;
+    buf[n] = 0;
+    return n;
+}
+// parse an IIO mount-matrix attribute "m00, m01, m02; m10, m11, m12; m20, m21, m22" into m[3][3].
+// Defaults to identity if the attribute is missing/short.
+static void iio_parse_matrix(const char *path, double m[3][3]) {
+    for (int i = 0; i < 3; i++) for (int j = 0; j < 3; j++) m[i][j] = (i == j) ? 1.0 : 0.0;
+    char buf[256];
+    if (iio_slurp(path, buf, sizeof buf) <= 0) return;
+    int r = 0, col = 0;
+    char *save = NULL;
+    for (char *row = strtok_r(buf, ";", &save); row && r < 3; row = strtok_r(NULL, ";", &save), r++) {
+        col = 0;
+        char *save2 = NULL;
+        for (char *v = strtok_r(row, ",", &save2); v && col < 3; v = strtok_r(NULL, ",", &save2), col++)
+            m[r][col] = atof(v);
+    }
+}
+// find $PF_IIO_ROOT/iio:deviceN whose name == want; returns 1 + fills devdir, else 0.
+static int iio_find(const char *want, char *devdir, int cap) {
+    const char *root = getenv("PF_IIO_ROOT");
+    if (!root) root = "/sys/bus/iio/devices";
+    DIR *d = opendir(root);
+    if (!d) return 0;
+    struct dirent *e;
+    char p[512], name[128];
+    int found = 0;
+    while ((e = readdir(d))) {
+        if (strncmp(e->d_name, "iio:device", 10)) continue;
+        snprintf(p, sizeof p, "%s/%s/name", root, e->d_name);
+        if (iio_slurp(p, name, sizeof name) < 0) continue;
+        if (strcmp(name, want)) continue;
+        snprintf(devdir, cap, "%s/%s", root, e->d_name);
+        found = 1;
+        break;
+    }
+    closedir(d);
+    return found;
+}
+// read one channel (e.g. "accel" -> in_accel_*) into device-frame milli-SI integers out[3].
+// Returns 1 if the channel's raws exist, else 0 (channel absent on this device).
+static int iio_read_channel(const char *devdir, const char *chan, long out_milli[3]) {
+    char p[600], buf[64];
+    double scale = 0.0, raw[3];
+    snprintf(p, sizeof p, "%s/in_%s_scale", devdir, chan);
+    if (iio_slurp(p, buf, sizeof buf) <= 0) return 0;
+    scale = atof(buf);
+    const char axis[3] = {'x', 'y', 'z'};
+    for (int i = 0; i < 3; i++) {
+        snprintf(p, sizeof p, "%s/in_%s_%c_raw", devdir, chan, axis[i]);
+        if (iio_slurp(p, buf, sizeof buf) <= 0) return 0;
+        raw[i] = atof(buf);
+    }
+    double m[3][3];
+    snprintf(p, sizeof p, "%s/in_%s_mount_matrix", devdir, chan);
+    iio_parse_matrix(p, m);
+    // chip-frame SI then device = M . chip
+    double chip[3] = {raw[0] * scale, raw[1] * scale, raw[2] * scale};
+    for (int i = 0; i < 3; i++) {
+        double v = m[i][0] * chip[0] + m[i][1] * chip[1] + m[i][2] * chip[2];
+        out_milli[i] = (long)llround(v * 1000.0);
+    }
+    return 1;
+}
+// reply to "imu <name>": "imu <name> ax ay az gx gy gz" (milli-SI) or "imu-absent ...".
+static void handle_imu(int resp, const char *want) {
+    char devdir[512];
+    if (!iio_find(want, devdir, sizeof devdir)) {
+        dprintf(resp, "imu-absent no-iio-device-named-%s\n", want);
+        return;
+    }
+    long a[3] = {0,0,0}, g[3] = {0,0,0};
+    int have_a = iio_read_channel(devdir, "accel", a);
+    int have_g = iio_read_channel(devdir, "anglvel", g);
+    if (!have_a && !have_g) { dprintf(resp, "imu-absent no-channels\n"); return; }
+    dprintf(resp, "imu %s %ld %ld %ld %ld %ld %ld\n", want, a[0], a[1], a[2], g[0], g[1], g[2]);
+}
+
 // ---- FIFO line protocol (O_RDWR so opens never block; one reader/one writer per fifo) ----
 static int read_line(int fd, char *buf, int cap) {
     int n = 0;
@@ -354,6 +447,10 @@ int main(int argc, char **argv) {
             put_rgb(rgb, (unsigned char *)fbmem, CANVAS_W, CANVAS_H);
             int ok = write_ppm(path, rgb, CANVAS_W, CANVAS_H) == 0;
             dprintf(resp, ok ? "ok\n" : "err\n");
+        } else if (!strncmp(line, "imu", 3)) {
+            const char *want = line + 3;
+            while (*want == ' ') want++;
+            handle_imu(resp, *want ? want : "qmi8658");
         } else if (!strncmp(line, "quit", 4)) {
             dprintf(resp, "bye\n");
             break;
