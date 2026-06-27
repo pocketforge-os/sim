@@ -22,8 +22,8 @@ ARG DEBIAN_DIGEST=sha256:30482e873082e906a4908c10529180aefb6f77620aea7404b909829
 ARG ROOTFS_PLATFORM=linux/arm64
 ARG QEMU_TSP_REPO=https://github.com/pocketforge-os/qemu-tsp.git
 ARG QEMU_TSP_COMMIT=329c754ad34e4b8062f2a941ab35383811df70bf
-# platform is a PRIVATE repo -> vendored as a pinned `git archive` (docker/platform.pin); the
-# commit below is the pin of record (origin/main; descriptors match the E5 baselines byte-for-byte).
+# platform is PUBLIC (tsp-qc1.4) -> cloned directly at the pinned commit below (origin/main;
+# descriptors match the E5 baselines byte-for-byte). Pin of record: docker/platform.pin.
 ARG PLATFORM_REPO=https://github.com/pocketforge-os/platform.git
 ARG PLATFORM_COMMIT=716e350ed9e1fb50ebbfde113d5c2d1c8a522822
 
@@ -92,12 +92,14 @@ RUN mkdir -p /apps && \
 
 # ───────────────────────────── platform descriptors (pinned) ─────────────────────────────
 FROM toolchain AS platform
-# platform is a PRIVATE repo -> vendored as a pinned `git archive` of PLATFORM_COMMIT in the build
-# context (NO creds baked; analogous to LOCAL_BLOBS for the device image). See docker/platform.pin.
-# NAMED reproducible-from-clean boundary: the pinned archive must be PROVIDED to the build (it is
-# not fetched from clean because the repo is private) — same provenance model as the vendor blobs.
-COPY platform-pinned.tar /tmp/platform.tar
-RUN mkdir -p /platform && tar -xf /tmp/platform.tar -C /platform && rm /tmp/platform.tar \
+ARG PLATFORM_REPO
+ARG PLATFORM_COMMIT
+# platform is PUBLIC (tsp-qc1.4) -> clone directly at the pinned commit, so the build is truly
+# reproducible-FROM-CLEAN with NO out-of-band input (this CLOSED the former private-archive gap).
+RUN git clone "${PLATFORM_REPO}" /platform \
+ && git -C /platform checkout --quiet "${PLATFORM_COMMIT}" \
+ && git -C /platform rev-parse HEAD \
+ && rm -rf /platform/.git \
  && test -f /platform/devices/a133/capabilities.toml && test -f /platform/core/caps.py
 
 # ───────────────────────────── runtime (slim; everything baked in) ─────────────────────────────
