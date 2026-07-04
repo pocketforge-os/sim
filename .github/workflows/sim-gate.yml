@@ -12,11 +12,30 @@ name: sim-gate
 # self-hosted+docker). It needs /dev/uinput + the scoped cap set from docker/README.md (the
 # tsp-qc1.2 nesting verdict) — lighter than --privileged, no host AppArmor change. No ghcr push
 # (build-then-run, per the owner decision).
+#
+# SECURITY POSTURE (tsp-j5y, 2026-07-03). This job runs PR-authored code on a self-hosted runner
+# that has docker host-root + the elevated container cap set below (SYS_ADMIN + unconfined
+# apparmor/seccomp) — those caps are IRREDUCIBLE: the nested bwrap sandbox must create namespaces
+# and do mount/pivot_root, and the suite needs the host `/dev/uinput` + evdev nodes, so this cannot
+# run on a GitHub-hosted runner and the caps cannot be dropped without breaking the tsp-qc1.2
+# verdict. The untrusted-code exposure is instead confined at the org layer:
+#   1. Fork / outside-contributor PRs are approval-gated (org actions fork-pr-contributor-approval =
+#      all_external_contributors) — a maintainer must click approve before this job runs on a fork.
+#   2. `trimui-build-lab` lives in a dedicated org runner group whose repo allow-list is only the
+#      trusted set {sim, kernel-tsp, infra} (tsp-j5y D1) — no other repo can reach this runner.
+# The two hardenings below are the workflow-level defense-in-depth that does NOT alter the tested
+# cap set: a least-privilege GITHUB_TOKEN, and a network-isolated RUN phase (the headless suite is
+# fully offline from baked, pinned artifacts — see docker/README.md).
 
 on:
   pull_request:
     branches: [main]
   workflow_dispatch:
+
+# Least-privilege GITHUB_TOKEN for a job that executes untrusted PR code. The suite neither reads
+# repo contents beyond the checkout nor writes anything back, so read-only contents is sufficient.
+permissions:
+  contents: read
 
 concurrency:
   group: sim-gate-${{ github.ref }}
@@ -37,16 +56,21 @@ jobs:
       - name: Build pocketforge-sim (pinned, reproducible-from-clean)
         run: docker build -t "$IMG" .
 
+      # --network none: the headless suite runs entirely from baked, pinned artifacts (no
+      # out-of-band input — docker/README.md), so denying the RUN phase any network shrinks the
+      # blast radius of malicious PR code executing under the elevated caps (no exfil / callout).
+      # The build phase above keeps its network (apt + pinned clones). NOTE(reviewer): confirm the
+      # nested qemu-tsp/bwrap path needs no loopback/network; if it does, drop `--network none`.
       - name: check-control a133 a523 (ALL DEVICES PASS, native==qemu byte-identical)
         run: |
-          docker run --rm \
+          docker run --rm --network none \
             --device /dev/uinput --device-cgroup-rule "c 13:* rmw" -v /dev/input:/dev/input \
             --cap-add SYS_ADMIN --security-opt apparmor=unconfined --security-opt seccomp=unconfined \
             "$IMG" check-control a133 a523
 
       - name: check-sensor a133 a523 (ALL DEVICES PASS, native==qemu byte-identical)
         run: |
-          docker run --rm \
+          docker run --rm --network none \
             --device /dev/uinput --device-cgroup-rule "c 13:* rmw" -v /dev/input:/dev/input \
             --cap-add SYS_ADMIN --security-opt apparmor=unconfined --security-opt seccomp=unconfined \
             "$IMG" check-sensor a133 a523
