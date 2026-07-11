@@ -8,6 +8,7 @@
 #   pf-sim check-control [devices...]   # default: a133 a523
 #   pf-sim check-sensor  [devices...]
 #   pf-sim check-skin    [devices...]
+#   pf-sim check-broker-stub            # broker_stub presence/policy unit-test (tsp-9sx.6; no qemu)
 #   pf-sim window <device>              # interactive --window demo (DEMO image; needs a real $DISPLAY)
 #   pf-sim window-selftest [device]     # autonomous: live-window smoke + driver loop (Xvfb; DEMO image)
 #   pf-sim shell                        # interactive debug
@@ -20,6 +21,7 @@ case "$cmd" in
   check-control) exec python3 "$SIM/control/check-control.py" "$@" ;;
   check-sensor)  exec python3 "$SIM/sensor/check-sensor.py"  "$@" ;;
   check-skin)    exec python3 "$SIM/skin/check-skin.py"      "$@" ;;
+  check-broker-stub) exec python3 "$SIM/control/check-broker-stub.py" "$@" ;;
   window)
     # the interactive live demo (DEMO image) — needs a real X display forwarded in
     : "${DISPLAY:?'pf-sim window' needs a real X display (-e DISPLAY -v /tmp/.X11-unix:/tmp/.X11-unix); for a headless check use 'window-selftest'}"
@@ -40,6 +42,6 @@ case "$cmd" in
   shell)         exec /bin/bash "$@" ;;
   *)
     echo "pf-sim: unknown command '$cmd'" >&2
-    echo "usage: pf-sim {check-control|check-sensor|check-skin|window|window-selftest|shell} [devices...]" >&2
+    echo "usage: pf-sim {check-control|check-sensor|check-skin|check-broker-stub|window|window-selftest|shell} [devices...]" >&2
     exit 2 ;;
 esac
