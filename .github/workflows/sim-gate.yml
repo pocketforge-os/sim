@@ -18,11 +18,16 @@ name: sim-gate
 # apparmor/seccomp) — those caps are IRREDUCIBLE: the nested bwrap sandbox must create namespaces
 # and do mount/pivot_root, and the suite needs the host `/dev/uinput` + evdev nodes, so this cannot
 # run on a GitHub-hosted runner and the caps cannot be dropped without breaking the tsp-qc1.2
-# verdict. The untrusted-code exposure is instead confined at the org layer:
-#   1. Fork / outside-contributor PRs are approval-gated (org actions fork-pr-contributor-approval =
-#      all_external_contributors) — a maintainer must click approve before this job runs on a fork.
-#   2. `trimui-build-lab` lives in a dedicated org runner group whose repo allow-list is only the
-#      trusted set {sim, kernel-tsp, infra} (tsp-j5y D1) — no other repo can reach this runner.
+# verdict. The untrusted-code exposure is instead confined by three layers (tsp-j5y; hardened by
+# tsp-20u1, the build-lab confinement invariant — "trimui-build-lab never executes fork/public-PR
+# code", canonical doc in mission-control BUILD_PIPELINE.md):
+#   1. MECHANICAL fork guard — the job-level `if:` below skips this job for any PR whose head repo
+#      is not this repository, so even a maintainer-APPROVED fork PR never executes here (tsp-20u1).
+#   2. Fork / outside-contributor PRs are approval-gated (org actions fork-pr-contributor-approval =
+#      all_external_contributors) — defense-in-depth beneath the guard.
+#   3. `trimui-build-lab` lives in a dedicated org runner group (`build-lab`, visibility=selected)
+#      whose repo allow-list is only the trusted set {sim, pf-hwprobe, infra, kernel-tsp (archived,
+#      inert)} (tsp-j5y D1; audited tsp-20u1) — no other repo can reach this runner.
 # The two hardenings below are the workflow-level defense-in-depth that does NOT alter the tested
 # cap set: a least-privilege GITHUB_TOKEN, and a network-isolated RUN phase (the headless suite is
 # fully offline from baked, pinned artifacts — see docker/README.md).
@@ -43,6 +48,14 @@ concurrency:
 
 jobs:
   headless-suite:
+    # Build-lab confinement invariant (tsp-20u1): this self-hosted runner has
+    # docker = host root and must NEVER execute fork/public-PR code — the org
+    # approval gate alone still lets an approved fork PR run here, so this
+    # guard makes the invariant MECHANICAL: skip the job whenever the PR head
+    # is not this repository. Advisory check, so a skip blocks nobody.
+    # Canonical doc: mission-control BUILD_PIPELINE.md "Build-lab confinement
+    # invariant".
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: [self-hosted, docker]
     timeout-minutes: 45
     env:
