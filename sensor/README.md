@@ -32,11 +32,17 @@ synthesizes a **virtual IIO device** — the sensor analog of .3's synthesized u
   `set_pose_from_drag()`, rumble/preference passthrough.
 - `harness/run-in-harness.sh` gains the conditional `IIO_BIND` bind (the .4/.5 `OUT_BIND` pattern).
 
-## Run (modelmaker)
+## Run
+
+**Today, run this suite in the pinned container:** `./sim run <device>` / `./sim check` from the
+repo root — no host paths to set (see [`../docs/CLI.md`](../docs/CLI.md)). The standalone host-dev
+form below is for hacking on this component directly (needs the SDL3/rootfs staged under
+`$HOME/sim-build`):
+
 ```
-cd /home/mm/sim/sensor
-QEMU_TSP=/home/mm/qemu-tsp/build/qemu-tsp/qemu-aarch64 SDLR=/home/mm/sim-build/sdl3-render \
-ROOTFS=/home/mm/sim-build/harness/rootfs-arm64 PLATFORM=/home/mm/platform bash run-sensor.sh
+cd sensor
+QEMU_TSP=$HOME/qemu-tsp/build/qemu-tsp/qemu-aarch64 SDLR=$HOME/sim-build/sdl3-render \
+ROOTFS=$HOME/sim-build/harness/rootfs-arm64 PLATFORM=$HOME/platform bash run-sensor.sh
 ```
 `check-sensor.py` is the CI-gate extension (sibling to `control/check-control.py`). Exit 0 = PASS
 over the descriptor × launcher matrix, ZERO per-device test code. Results + the honesty contract:

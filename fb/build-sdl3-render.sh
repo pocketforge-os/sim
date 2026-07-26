@@ -14,8 +14,8 @@
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 PIN="$HERE/../sdl3/SDL3.pin"
-OUT="${OUT:-/home/mm/sim-build/sdl3-render}"
-SRC="${SRC:-/home/mm/sim-build/sdl3/SDL}"   # reuse the SPIKE-3 clone if present
+OUT="${OUT:-${HOME}/sim-build/sdl3-render}"
+SRC="${SRC:-${HOME}/sim-build/sdl3/SDL}"   # reuse the SPIKE-3 clone if present
 
 REPO=$(sed -n 's/^repo *= *//p' "$PIN")
 TAG=$(sed -n  's/^tag *= *//p'  "$PIN")

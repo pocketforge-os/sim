@@ -44,13 +44,21 @@ the app draws from, and the host's own region asserts read the *same* `compute_l
 | [`check-control.py`](check-control.py) | **the CI-gate entrypoint** — drives the surface over the descriptor×scenario matrix, asserts headline + full input/capability matrix, checks native==qemu byte-identical parity. |
 | [`run-control.sh`](run-control.sh) | end-to-end on modelmaker: compile the app (x86+arm64), run the suite under sudo. |
 
-## Run (on modelmaker)
+## Run
+
+**Today, run this suite in the pinned container — no host paths to set:** `./sim run a133` (one
+device) or `./sim check` (the full matrix) from the repo root, exactly as the CI gate does. See
+[`../docs/CLI.md`](../docs/CLI.md).
+
+The standalone host-dev form below is for hacking on this component directly on a build host (it
+needs the toolchain + a built SDL3/rootfs staged under `$HOME/sim-build`, which is exactly the
+host-staging the container exists to kill):
 
 ```bash
-QEMU_TSP=/home/mm/qemu-tsp/build/qemu-tsp/qemu-aarch64 \
-SDLR=/home/mm/sim-build/sdl3-render \
-ROOTFS=/home/mm/sim-build/harness/rootfs-arm64 \
-PLATFORM=/home/mm/platform \
+QEMU_TSP=$HOME/qemu-tsp/build/qemu-tsp/qemu-aarch64 \
+SDLR=$HOME/sim-build/sdl3-render \
+ROOTFS=$HOME/sim-build/harness/rootfs-arm64 \
+PLATFORM=$HOME/platform \
 ./control/run-control.sh
 # => ALL DEVICES PASS (a133 a523)
 ```

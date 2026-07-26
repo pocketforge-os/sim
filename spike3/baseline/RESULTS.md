@@ -33,7 +33,7 @@ SDL's builtin X360 map binds `leftstick:b9,rightstick:b10` (the shared HID super
 
 ## Reproduce
 ```bash
-QEMU_TSP=/home/mm/qemu-tsp/build/qemu-tsp/qemu-aarch64 \
-SDLDIR=/home/mm/sim-build/sdl3 PLATFORM=/home/mm/platform \
+QEMU_TSP=$HOME/qemu-tsp/build/qemu-tsp/qemu-aarch64 \
+SDLDIR=$HOME/sim-build/sdl3 PLATFORM=$HOME/platform \
   ../run-spike3.sh           # asserts via check-spike3.py, exit 0 on PASS
 ```

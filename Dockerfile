@@ -2,7 +2,7 @@
 #
 # ONE multistage image, built from PINNED refs on ANY host, carrying everything the per-wall
 # run-*.sh / check-*.py need: qemu-tsp + both SDL3 variants + an arm64 bookworm rootfs + the
-# compiled apps + the platform descriptors. Retires the hand-staged /home/mm/sim-build tree and
+# compiled apps + the platform descriptors. Retires the hand-staged host build tree and
 # every host-toolchain assumption (gcc / cross-gcc / cmake / bubblewrap / sudo all live IN the image).
 #
 # LAYERING (unchanged from E5): the app still runs under qemu-tsp + bubblewrap, NO crun. This image
@@ -176,7 +176,7 @@ COPY --from=rootfs   /rootfs/rootfs-arm64                   /opt/pf/rootfs-arm64
 COPY --from=apps     /apps                                  /opt/pf/apps
 COPY --from=platform /platform                              /opt/pf/platform
 
-# image-internal paths the check-*.py read from the environment (retires the /home/mm absolutes)
+# image-internal paths the check-*.py read from the environment (retires the host-path absolutes)
 ENV QEMU_TSP=/opt/pf/qemu-tsp/qemu-aarch64 \
     ROOTFS=/opt/pf/rootfs-arm64 \
     PLATFORM=/opt/pf/platform \

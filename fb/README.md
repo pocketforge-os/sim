@@ -35,13 +35,18 @@ for the on-window app path (C6/E6):
    `SDL_CreateRenderer(win, "software")` (forcing the software driver so SDL never enters the
    GL path). The run logs `tsp-osr-pin: OK ... -> 'software'` — it succeeds, no segfault.
 
-## Run (modelmaker, x86, GPU-less is fine)
+## Run
+
+**Today, this path runs inside the pinned container** via `./sim run <device>` / `./sim check` — no
+host paths to set (see [`../docs/CLI.md`](../docs/CLI.md)). The standalone host-dev form below is
+for hacking on this component directly on an x86 build host (GPU-less is fine), and needs the SDL3/
+rootfs staged under `$HOME/sim-build`:
 
 ```bash
-QEMU_TSP=/home/mm/qemu-tsp/build/qemu-tsp/qemu-aarch64 \
-SDLR=/home/mm/sim-build/sdl3-render \
-ROOTFS=/home/mm/sim-build/harness/rootfs-arm64 \
-PLATFORM=/home/mm/platform \
+QEMU_TSP=$HOME/qemu-tsp/build/qemu-tsp/qemu-aarch64 \
+SDLR=$HOME/sim-build/sdl3-render \
+ROOTFS=$HOME/sim-build/harness/rootfs-arm64 \
+PLATFORM=$HOME/platform \
   ./fb/run-fb.sh                 # a133 + a523; exit 0 = PASS; artifacts in fb/baseline/<id>/
 ```
 

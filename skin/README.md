@@ -71,18 +71,19 @@ PowerVR→dc_sunxi→DE2.0→fb0 path (the software-render fb proves nothing on-
 timing/thermal; isolation/enforcement; **per-SoC graphics** (A133 sunxifb/no-KMS vs A523
 kmsdrm/Mali). The "zero per-device code" claim is for the **I/O + skin layer only**.
 
-## Run (modelmaker)
+## Run
+
+**Today, run the skin suite in the pinned container** via `./sim run <device>` / `./sim check`
+(headless), and open the clickable skin with `./sim gui [device]` — no host paths, no rsync (see
+[`../docs/CLI.md`](../docs/CLI.md)). The standalone host-dev form below is for hacking on this
+component directly on a build host (needs the SDL3/rootfs staged under `$HOME/sim-build`):
 
 ```bash
-# inner loop: edit on the laptop, rsync to mm, run heavy fb/qemu on mm
-rsync -az --exclude baseline/ --exclude __pycache__/ skin/ mm@10.0.40.90:/home/mm/sim/skin/
-
-ssh mm@10.0.40.90 'cd /home/mm/sim/skin && \
-  QEMU_TSP=/home/mm/qemu-tsp/build/qemu-tsp/qemu-aarch64 \
-  SDLR=/home/mm/sim-build/sdl3-render \
-  ROOTFS=/home/mm/sim-build/harness/rootfs-arm64 \
-  PLATFORM=/home/mm/platform \
-  bash run-skin.sh'          # => ALL DEVICES PASS (a133 a523)
+QEMU_TSP=$HOME/qemu-tsp/build/qemu-tsp/qemu-aarch64 \
+SDLR=$HOME/sim-build/sdl3-render \
+ROOTFS=$HOME/sim-build/harness/rootfs-arm64 \
+PLATFORM=$HOME/platform \
+bash run-skin.sh          # => ALL DEVICES PASS (a133 a523)
 ```
 
 `--window` live mode (laptop with a display + a video-capable SDL3) opens the bezel; clicks are
