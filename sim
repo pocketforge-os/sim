@@ -7,7 +7,7 @@
 #
 #     ./sim run a133        # boot one virtual device, run its headless logical suite
 #     ./sim gui a133        # the clickable .scad-rendered skin — press the bezel, watch it light
-#     ./sim check           # the full CI matrix (a133 + a523), exactly as sim-gate.yml runs it
+#     ./sim check           # the full CI matrix (data-driven from platform), exactly as sim-gate.yml runs it
 #
 # It is a THIN, honest wrapper: every command below is the same container entrypoint (`pf-sim …`) the
 # CI gate runs, invoked with the exact caps the nested bwrap+qemu-tsp sim needs (docker/README.md, the
@@ -22,7 +22,11 @@ HERE="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 # ── image tags + the pinned container caps (single source of truth) ───────────────────────────────
 IMAGE="${SIM_IMAGE:-pocketforge-sim}"          # base (headless CI) image tag; override for CI run-id tags
 DEMO_IMAGE="${SIM_DEMO_IMAGE:-pocketforge-sim:demo}"
-DEVICES_DEFAULT="a133 a523"                     # the CI matrix (must match sim-gate.yml)
+# The CI matrix is DATA-DRIVEN (infra-113 B4 / D6): `sim check` with no device args derives the
+# device list + per-device posture (blocking|advisory|excluded) from the BAKED platform's
+# ci-matrix.toml via `pf-sim matrix`, so there is NO hardcoded device list here or in sim-gate.yml.
+# Adding a device to CI = adding platform data (a descriptor auto-joins as advisory), never a
+# workflow edit.
 
 # The IRREDUCIBLE nested-sim caps (docker/README.md): create bwrap namespaces (SYS_ADMIN under the
 # default seccomp), do mount/pivot_root (unconfined apparmor+seccomp), open the uinput control node,
@@ -105,15 +109,32 @@ run_suite() { # <suite> <devices...>
   step "pf-sim check-${suite} $*  ${DIM}(native x86 == arm64-under-qemu-tsp, byte-identical)${RST}"
   docker run --rm "${_net[@]}" "${SIM_CAPS[@]}" "$IMAGE" "check-${suite}" "$@"
 }
-run_headless() { # <devices...> — run the full logical matrix (control + sensor + skin)
-  need_docker; need_uinput; build_base; validate_devices "$IMAGE" "$@"
+run_suites_over() { # <devices...> — control+sensor+skin over the devices; return rc (no build/validate)
   local suite rc=0
   for suite in control sensor skin; do
     run_suite "$suite" "$@" || rc=$?
   done
+  return "$rc"
+}
+run_headless() { # <devices...> — build+validate, run the full matrix HARD (failure => nonzero)
+  need_docker; need_uinput; build_base; validate_devices "$IMAGE" "$@"
+  local rc=0
+  run_suites_over "$@" || rc=$?
   if [ "$rc" -eq 0 ]; then printf '%s\n' "${GRN}${BOLD}✓ ALL SUITES PASS${RST} (control + sensor + skin) for: $*" >&2
   else printf '%s\n' "${RED}${BOLD}✗ suite failure${RST} (exit ${rc}) — see the FAIL lines above" >&2; fi
   return "$rc"
+}
+
+# ── data-driven matrix (infra-113 B4 / D6): derive device rows + posture from the baked platform ──
+matrix_ids() { # <posture> — space-separated device ids at that posture, from the image's ci-matrix
+  # `|| true`: a pre-B4 baked platform has no `matrix` subcommand -> the entrypoint verb execs
+  # caps.py which exits 2; we must NOT let that nonzero status kill the caller under `set -e`
+  # (it would skip the fail-closed fallback). Empty output => the fallback runs.
+  docker run --rm "$IMAGE" matrix list --posture "$1" --format ids 2>/dev/null || true
+}
+caps_descriptor_devices() { # descriptor'd devices in the image (NOT all devices/ dirs) — for the
+  # fail-closed fallback: profile-only dirs (a133-owned/sdm845) have no descriptor and must not run.
+  docker run --rm "$IMAGE" shell -lc 'python3 /opt/pf/platform/core/caps.py list' 2>/dev/null | tr '\n' ' ' || true
 }
 
 # ── commands ──────────────────────────────────────────────────────────────────────────────────────
@@ -123,7 +144,7 @@ cmd_run() {
   run_headless "$1"
 }
 
-cmd_check() { # the full CI matrix, exactly as sim-gate.yml runs it
+cmd_check() { # the full CI matrix, exactly as sim-gate.yml runs it (data-driven, posture-aware)
   local rm_image=0
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -133,9 +154,46 @@ cmd_check() { # the full CI matrix, exactly as sim-gate.yml runs it
       *) break ;;
     esac
   done
-  [ $# -gt 0 ] || set -- $DEVICES_DEFAULT
   local rc=0
-  run_headless "$@" || rc=$?
+  if [ $# -gt 0 ]; then
+    # EXPLICIT device args (developer override): run exactly those, HARD — a dev asking for a
+    # device wants to see real failures, so posture does not soften an explicit request.
+    run_headless "$@" || rc=$?
+  else
+    # DATA-DRIVEN default (infra-113 B4 / D6): the device list + posture come from the baked
+    # platform ci-matrix.toml — NOT a hardcoded list. blocking-device failures BLOCK (nonzero
+    # exit => the required check goes red); advisory-device failures REPORT but do not block;
+    # excluded devices never run. Adding a device = adding platform data, never editing this CLI.
+    need_docker; need_uinput; build_base
+    local blocking advisory excluded
+    blocking="$(matrix_ids blocking)"; advisory="$(matrix_ids advisory)"; excluded="$(matrix_ids excluded)"
+    if [ -z "$blocking$advisory" ]; then
+      # FAIL-CLOSED fallback: the baked platform predates infra-113 B4 (no ci-matrix.toml /
+      # no `matrix` subcommand). Derive the device list from platform data anyway (`caps list` =
+      # the DESCRIPTOR'd devices in the image, excluding profile-only dirs) and gate them ALL as
+      # blocking (pre-B4 behavior) — a stale pin never SILENTLY relaxes a device. Still list-free.
+      blocking="$(caps_descriptor_devices)"; advisory=""; excluded=""
+      warn "baked platform has no ci-matrix.toml (pin predates infra-113 B4) — all descriptor'd devices treated BLOCKING until the pin catches up"
+    fi
+    step "CI matrix (data-driven from platform ci-matrix.toml):"
+    printf '%s\n' "  ${BOLD}blocking${RST} (a failure BLOCKS): ${blocking:-${DIM}(none)${RST}}" >&2
+    printf '%s\n' "  ${BOLD}advisory${RST} (a failure REPORTS): ${advisory:-${DIM}(none)${RST}}" >&2
+    printf '%s\n' "  ${DIM}excluded (not run): ${excluded:-(none)}${RST}" >&2
+    [ -n "$blocking$advisory" ] || die "the CI matrix derived ZERO runnable devices — check platform ci-matrix.toml (pf caps matrix validate)."
+    if [ -n "$blocking" ]; then
+      validate_devices "$IMAGE" $blocking
+      run_suites_over $blocking || rc=$?
+      if [ "$rc" -eq 0 ]; then printf '%s\n' "${GRN}${BOLD}✓ BLOCKING suites pass${RST} for: $blocking" >&2
+      else printf '%s\n' "${RED}${BOLD}✗ BLOCKING suite failure${RST} (exit ${rc}) for: $blocking — merge is blocked" >&2; fi
+    fi
+    if [ -n "$advisory" ]; then
+      validate_devices "$IMAGE" $advisory
+      local arc=0
+      run_suites_over $advisory || arc=$?
+      if [ "$arc" -eq 0 ]; then printf '%s\n' "${GRN}${BOLD}✓ ADVISORY suites pass${RST} for: $advisory" >&2
+      else printf '%s\n' "${YEL}${BOLD}⚠ ADVISORY suite failure${RST} (exit ${arc}) for: $advisory — REPORTED, does not block merge" >&2; fi
+    fi
+  fi
   [ "$rm_image" = "1" ] && { docker image rm -f "$IMAGE" >/dev/null 2>&1 || true; }
   return "$rc"
 }
@@ -232,8 +290,10 @@ ${BOLD}COMMANDS${RST}
   ${GRN}gui${RST} [device]       Open the clickable .scad-rendered skin — press the bezel and watch
                      the control light up. Live X11 window on a display host; falls back
                      to an autonomous Xvfb self-test when headless. ${DIM}default: a133${RST}
-  ${GRN}check${RST} [devices…]   The ${BOLD}full CI matrix${RST}, exactly as sim-gate.yml runs it
-                     (control + sensor + skin over ${DIM}${DEVICES_DEFAULT}${RST}). This is the gate.
+  ${GRN}check${RST} [devices…]   The ${BOLD}full CI matrix${RST}, exactly as sim-gate.yml runs it. With no
+                     args the device list + per-device posture (blocking/advisory/excluded) are
+                     ${BOLD}data-driven${RST} from platform's ci-matrix.toml; naming devices runs just those,
+                     hard. This is the gate.
   ${GRN}devices${RST}            List the virtual devices this image can run.
   ${GRN}build${RST} [base|demo|all]   Build the pinned image(s) without running anything.
   ${GRN}shell${RST} [demo]       Interactive debug shell inside the container (caps attached).

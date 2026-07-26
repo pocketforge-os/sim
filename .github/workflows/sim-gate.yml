@@ -113,13 +113,22 @@ jobs:
 
       # infra-113 C1 (D7): the gate runs the LITERAL same entrypoint a developer runs — `./sim check`
       # — so CI and the dev inner-loop cannot silently drift (the product guarantee this epic exists
-      # to enforce; an equivalence note would be a proxy that can drift). `./sim check a133 a523`
-      # BUILDS the pinned image (network ON — apt + pinned clones) then runs check-control +
-      # check-sensor + check-skin over a133 a523 with the exact nested-sim caps (--device /dev/uinput,
-      # --device-cgroup-rule "c 13:* rmw", -v /dev/input:/dev/input, --cap-add SYS_ADMIN, unconfined
-      # apparmor+seccomp — docker/README.md, the tsp-qc1.2 nesting verdict) and --network none on the
-      # RUN phase. check-skin rides the same CLI (it joined the gate in tsp-65jc.1/A1 — the PR's own
-      # run proves the .scad clickable skin green on the runner).
+      # to enforce; an equivalence note would be a proxy that can drift). `./sim check` (NO device
+      # args) BUILDS the pinned image (network ON — apt + pinned clones), then derives the device
+      # list + per-device posture DATA-DRIVEN from the baked platform's ci-matrix.toml (infra-113 B4
+      # / D6, `pf-sim matrix`) and runs check-control + check-sensor + check-skin over them with the
+      # exact nested-sim caps (--device /dev/uinput, --device-cgroup-rule "c 13:* rmw",
+      # -v /dev/input:/dev/input, --cap-add SYS_ADMIN, unconfined apparmor+seccomp — docker/README.md,
+      # the tsp-qc1.2 nesting verdict) and --network none on the RUN phase. check-skin rides the same
+      # CLI (it joined the gate in tsp-65jc.1/A1 — the PR's own run proves the .scad clickable skin
+      # green on the runner).
+      #
+      # POSTURE (infra-113 §5 / D2): the device rows are NO LONGER a hardcoded device list. The
+      # matrix keys blocking on a133 (a failure fails this required check → merge block) and runs
+      # a523 advisory (a failure is reported but does not fail the check); excluded devices never run.
+      # Adding a device to CI = adding platform data — a new descriptor auto-joins as advisory with
+      # ZERO edits here. This job's name (`headless-suite`) is the pinned required-check context
+      # (ruleset 19755679) and MUST stay stable.
       #
       # --network none: the suite runs entirely from baked, pinned artifacts (docker/README.md), so
       # denying the RUN phase any network shrinks the blast radius of malicious PR code under the
@@ -128,8 +137,8 @@ jobs:
       # confirm the nested qemu-tsp/bwrap path needs no loopback; if it does, set SIM_NETWORK=1 here
       # rather than losing the flag. SIM_IMAGE scopes the image tag to this run (concurrent PRs on the
       # shared runner don't collide); the cleanup step below removes it.
-      - name: sim check a133 a523 (the developer CLI IS the gate; ALL PASS, native==qemu byte-identical)
-        run: SIM_IMAGE="$IMG" ./sim check a133 a523
+      - name: sim check (data-driven matrix; the developer CLI IS the gate; native==qemu byte-identical)
+        run: SIM_IMAGE="$IMG" ./sim check
 
       - name: Cleanup CI image
         if: always()
