@@ -30,8 +30,14 @@ That is the entire onboarding. `./sim` wraps the **pinned, reproducible `pocketf
 container** (built from committed refs — see [`Dockerfile`](Dockerfile) and
 [`docker/README.md`](docker/README.md)), so the image bakes every pinned path (`QEMU_TSP`,
 `ROOTFS`, `PLATFORM`, the app binaries, the SDL3 libs). The nested sim runs as **root *inside* the
-container**, so no host root is needed for the app. First run builds the image (cached layers make
-repeats fast); `./sim doctor` reports anything missing up front, each ✗ with its fix.
+container**, so no host root is needed for the app. First run builds the image (a fresh checkout
+re-COPYs the sources, so expect a one-time multi-minute build; cached layers make repeats fast);
+`./sim doctor` reports anything missing up front, each ✗ with its fix.
+
+> **Run `./sim gui` from an interactive terminal.** On a host with a display it opens a **live**
+> X11 window (`docker run -it`), which needs a TTY on stdin — so run it directly in your terminal,
+> not piped through another command. Headless hosts (no `$DISPLAY`) instead run the autonomous
+> Xvfb self-test, which needs no TTY. `./sim run` / `./sim check` are fully non-interactive.
 
 Full command reference: [`docs/CLI.md`](docs/CLI.md). New to the project? Start with the
 [`docs/` index](docs/README.md).
