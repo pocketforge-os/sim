@@ -14,11 +14,21 @@
 #   - qemu-tsp fork     -> a pinned commit; it pins upstream qemu v8.2.2 (11aa0b1) via its UPSTREAM file
 #   - SDL3              -> sim/sdl3/SDL3.pin (release-3.4.10)
 #   - platform          -> a pinned commit (descriptors + skins + caps.py)
-# RESIDUAL reproducible-from-clean GAP (named, not papered over — ties tsp-cv7.4.13): apt installs
-#   from the live bookworm suite, not a snapshot.debian.org timestamp, so a rebuild months later may
-#   pull newer point-release packages. Hardening follow-up: pin apt to a snapshot mirror.
+# apt layer -> PINNED to a snapshot.debian.org timestamp (tsp-65jc.17, infra-113 D11 tail — this
+#   CLOSES the former "apt from live bookworm" reproducible-from-clean gap that tied tsp-cv7.4.13).
+#   The two base stages (toolchain, runtime) rewrite their apt sources to the dated snapshot mirror
+#   below BEFORE any apt-get; every derived stage (sdl3-window <- toolchain, demo <- runtime, and the
+#   qemu/sdl3/rootfs/apps/platform builders <- toolchain) inherits those baked sources, so ALL
+#   build-time apt installs now resolve against one frozen timestamp. Bumping the pin = a one-line
+#   SNAPSHOT_TIMESTAMP change (see docker/README.md "Bumping the apt snapshot pin") — deliberate,
+#   never silent. (The arm64 rootfs is a file source frozen by DEBIAN_DIGEST; it runs no build-time
+#   apt, so it is unaffected.)
 
 ARG DEBIAN_DIGEST=sha256:30482e873082e906a4908c10529180aefb6f77620aea7404b909829fadc5d168
+# apt snapshot pin (tsp-65jc.17): the recorded snapshot.debian.org timestamp all build-time apt
+# installs resolve against. Verified 2026-07-26 (bookworm=12.15 @ 2026-07-11; security Valid-Until
+# 2026-07-26 — which is why Acquire::Check-Valid-Until=false is REQUIRED, see the base stages).
+ARG SNAPSHOT_TIMESTAMP=20260720T000000Z
 ARG ROOTFS_PLATFORM=linux/arm64
 ARG QEMU_TSP_REPO=https://github.com/pocketforge-os/qemu-tsp.git
 ARG QEMU_TSP_COMMIT=329c754ad34e4b8062f2a941ab35383811df70bf
@@ -31,6 +41,18 @@ ARG PLATFORM_COMMIT=4ae14c56da2624ca75ec5ae5b328b37e047d264a
 # ───────────────────────────── toolchain base (x86) ─────────────────────────────
 FROM debian:bookworm@${DEBIAN_DIGEST} AS toolchain
 ENV DEBIAN_FRONTEND=noninteractive
+# apt snapshot pin (tsp-65jc.17): rewrite sources to the dated snapshot.debian.org mirror BEFORE the
+# first apt-get. All our packages live in `main`. Check-Valid-Until=false is REQUIRED, not optional:
+# snapshot serves the HISTORICAL Release files, whose Valid-Until (e.g. bookworm-security's ~7-day
+# window) is already in the past on any later rebuild — without this, `apt-get update` rejects them
+# as expired and the pin would not actually be reproducible-forever. Retries hardens against
+# snapshot.debian.org's occasional slowness/rate-limiting.
+ARG SNAPSHOT_TIMESTAMP
+RUN set -eux; \
+    printf 'deb http://snapshot.debian.org/archive/debian/%s/ bookworm main\ndeb http://snapshot.debian.org/archive/debian-security/%s/ bookworm-security main\ndeb http://snapshot.debian.org/archive/debian/%s/ bookworm-updates main\n' \
+      "${SNAPSHOT_TIMESTAMP}" "${SNAPSHOT_TIMESTAMP}" "${SNAPSHOT_TIMESTAMP}" > /etc/apt/sources.list; \
+    rm -f /etc/apt/sources.list.d/debian.sources; \
+    printf 'Acquire::Check-Valid-Until "false";\nAcquire::Retries "5";\n' > /etc/apt/apt.conf.d/99pf-snapshot
 RUN apt-get update && apt-get install -y --no-install-recommends \
       git ca-certificates build-essential gcc g++ \
       gcc-aarch64-linux-gnu g++-aarch64-linux-gnu libc6-dev-arm64-cross \
@@ -125,6 +147,14 @@ RUN git clone "${PLATFORM_REPO}" /platform \
 # ───────────────────────────── runtime (slim; everything baked in) ─────────────────────────────
 FROM debian:bookworm@${DEBIAN_DIGEST} AS runtime
 ENV DEBIAN_FRONTEND=noninteractive
+# apt snapshot pin (tsp-65jc.17): same dated-snapshot rewrite as the toolchain stage (this base is
+# independent of it). See the toolchain stage above for why Check-Valid-Until=false is required.
+ARG SNAPSHOT_TIMESTAMP
+RUN set -eux; \
+    printf 'deb http://snapshot.debian.org/archive/debian/%s/ bookworm main\ndeb http://snapshot.debian.org/archive/debian-security/%s/ bookworm-security main\ndeb http://snapshot.debian.org/archive/debian/%s/ bookworm-updates main\n' \
+      "${SNAPSHOT_TIMESTAMP}" "${SNAPSHOT_TIMESTAMP}" "${SNAPSHOT_TIMESTAMP}" > /etc/apt/sources.list; \
+    rm -f /etc/apt/sources.list.d/debian.sources; \
+    printf 'Acquire::Check-Valid-Until "false";\nAcquire::Retries "5";\n' > /etc/apt/apt.conf.d/99pf-snapshot
 RUN apt-get update && apt-get install -y --no-install-recommends \
       python3 bubblewrap file ca-certificates \
     && rm -rf /var/lib/apt/lists/*
