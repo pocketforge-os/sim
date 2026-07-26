@@ -1,0 +1,123 @@
+# ══════════════════════════════════════════════════════════════════════════════════════════════
+# ⚠ DISABLED BY DEFAULT — PUBLISHING IS OWNER-GATED (infra-113 C2 / D7, bead tsp-65jc.9).
+# ══════════════════════════════════════════════════════════════════════════════════════════════
+# This workflow publishes the pinned `pocketforge-sim` image to ghcr.io. It is MERGED but INERT:
+# it CANNOT publish until the owner enables it. Two independent guards keep it off:
+#
+#   1. TRIGGERS — only `workflow_dispatch` is active. The real `push`/tag triggers that make
+#      publishing automatic are written below in a commented `# on-enable:` block, ready to
+#      uncomment. Until then nothing (not even a main merge or a release tag) invokes this.
+#   2. JOB GUARD — `if: ${{ vars.SIM_PUBLISH_ENABLED == 'true' }}`. Even a manual dispatch is a
+#      NO-OP until the owner sets the repo variable `SIM_PUBLISH_ENABLED=true`.
+#
+# TO ENABLE (owner action, after the owner-decision checklist in docs/IMAGE-PUBLISHING.md §8 is
+# answered YES):
+#   a. Set repo variable `SIM_PUBLISH_ENABLED=true`  (Settings → Secrets and variables → Actions
+#      → Variables), or via:  gh variable set SIM_PUBLISH_ENABLED -b true -R pocketforge-os/sim
+#   b. Uncomment the `# on-enable:` push/tag trigger block below (replace the workflow_dispatch-only
+#      `on:`), so main merges + `v*` release tags publish automatically.
+#   c. Confirm the CI GITHUB_TOKEN may publish packages + set the package's initial visibility
+#      (public vs private — owner decision #2). See docs/IMAGE-PUBLISHING.md §7.
+#
+# DESIGN: docs/IMAGE-PUBLISHING.md. Runs on a GITHUB-HOSTED runner (ubuntu-latest), NOT the
+# self-hosted trimui-build-lab — publishing only BUILDS the image (no nested-sim caps needed), and
+# this keeps the Dell runner's exposure unchanged (infra-113 D11). Authenticates with the built-in
+# Actions GITHUB_TOKEN + `packages: write` — NOT the pocketforge-agent App token (which has no
+# packages:write, by design; see docs/IMAGE-PUBLISHING.md §7 + .claude/rules/secrets.md).
+# ══════════════════════════════════════════════════════════════════════════════════════════════
+
+name: publish-image
+
+# DISABLED: manual-dispatch only, and the job is additionally guarded by SIM_PUBLISH_ENABLED.
+on:
+  workflow_dispatch:
+
+# ── on-enable: uncomment this block (and remove the workflow_dispatch-only `on:` above) to make
+# ── publishing automatic on main merges + semver release tags. Keep workflow_dispatch too.
+# on:
+#   push:
+#     branches: [main]
+#     tags: ['v*']
+#   workflow_dispatch:
+
+# Least-privilege: read the source, write the package, and (for attestation) mint an OIDC token +
+# write attestations. Nothing else. `packages: write` here is the WORKFLOW GITHUB_TOKEN scope — it
+# does NOT touch the pocketforge-agent App install token (docs/IMAGE-PUBLISHING.md §7).
+permissions:
+  contents: read
+  packages: write
+  id-token: write        # actions/attest-build-provenance (OIDC)
+  attestations: write    # actions/attest-build-provenance
+
+concurrency:
+  group: publish-image-${{ github.ref }}
+  cancel-in-progress: false   # never cancel an in-flight publish
+
+jobs:
+  publish:
+    # GUARD #2: inert until the owner sets SIM_PUBLISH_ENABLED=true (see header). A manual dispatch
+    # with the variable unset skips with a green no-op.
+    if: ${{ vars.SIM_PUBLISH_ENABLED == 'true' }}
+    runs-on: ubuntu-latest       # GitHub-hosted (design §4 / D11) — NOT self-hosted; build-only, no sim caps
+    timeout-minutes: 45
+    env:
+      IMAGE: ghcr.io/${{ github.repository_owner }}/sim
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4 (repo requires SHA-pinned actions)
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f  # v3
+
+      - name: Log in to ghcr.io
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9  # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}   # workflow token, packages:write — NOT the App token
+
+      - name: Derive tags + labels
+        id: meta
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051  # v5
+        with:
+          images: ${{ env.IMAGE }}
+          # main -> :main + :sha-<short> (immutable); release tag v* -> :vX.Y.Z + :X.Y + :latest.
+          # Moving tags (main/latest) are conveniences; consumers PIN THE DIGEST (design §3/§6).
+          tags: |
+            type=ref,event=branch
+            type=sha,prefix=sha-
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+
+      - name: Build + push the lean runtime image
+        id: build
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8  # v6
+        with:
+          context: .
+          target: runtime            # the lean CI/dev image (NOT demo); design §2
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          provenance: false          # attestation is done explicitly below (attest-build-provenance)
+
+      - name: Attest build provenance (SLSA)
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be  # v2
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
+
+      - name: Record published digest
+        run: |
+          echo "### Published \`${IMAGE}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **digest:** \`${{ steps.build.outputs.digest }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **tags:**" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          echo "${{ steps.meta.outputs.tags }}" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Consumers pin the DIGEST, not a moving tag (docs/IMAGE-PUBLISHING.md §6)." >> "$GITHUB_STEP_SUMMARY"
