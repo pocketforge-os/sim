@@ -1,0 +1,271 @@
+#!/usr/bin/env bash
+# sim — the one-command developer CLI for the PocketForge virtual device simulator.
+#
+# Wraps the PINNED, reproducible `pocketforge-sim` container (built from committed refs — qemu-tsp +
+# both SDL3 variants + an arm64 rootfs + the compiled apps + the platform descriptors) so a developer
+# gets an AVD-style loop with ZERO hand-set env vars and ZERO host toolchain:
+#
+#     ./sim run a133        # boot one virtual device, run its headless logical suite
+#     ./sim gui a133        # the clickable .scad-rendered skin — press the bezel, watch it light
+#     ./sim check           # the full CI matrix (a133 + a523), exactly as sim-gate.yml runs it
+#
+# It is a THIN, honest wrapper: every command below is the same container entrypoint (`pf-sim …`) the
+# CI gate runs, invoked with the exact caps the nested bwrap+qemu-tsp sim needs (docker/README.md, the
+# tsp-qc1.2 nesting verdict). Read docs/HONESTY-CONTRACT.md — the sim proves the LOGICAL layer only.
+#
+# Dependency-light on PURPOSE: POSIX-ish bash + docker. No python, no venv, no pip. infra-113 C1 (D7).
+set -euo pipefail
+
+# ── locate the repo root (this script lives at the repo root) ─────────────────────────────────────
+HERE="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+
+# ── image tags + the pinned container caps (single source of truth) ───────────────────────────────
+IMAGE="${SIM_IMAGE:-pocketforge-sim}"          # base (headless CI) image tag; override for CI run-id tags
+DEMO_IMAGE="${SIM_DEMO_IMAGE:-pocketforge-sim:demo}"
+DEVICES_DEFAULT="a133 a523"                     # the CI matrix (must match sim-gate.yml)
+
+# The IRREDUCIBLE nested-sim caps (docker/README.md): create bwrap namespaces (SYS_ADMIN under the
+# default seccomp), do mount/pivot_root (unconfined apparmor+seccomp), open the uinput control node,
+# and see the host-devtmpfs event node the kernel creates on major-13 (the device-cgroup-rule + bind).
+SIM_CAPS=(
+  --device /dev/uinput
+  --device-cgroup-rule "c 13:* rmw"
+  -v /dev/input:/dev/input
+  --cap-add SYS_ADMIN
+  --security-opt apparmor=unconfined
+  --security-opt seccomp=unconfined
+)
+
+# ── pretty output (honors NO_COLOR + non-tty) ─────────────────────────────────────────────────────
+if [ -t 2 ] && [ -z "${NO_COLOR:-}" ]; then
+  BOLD=$'\033[1m'; DIM=$'\033[2m'; RED=$'\033[31m'; GRN=$'\033[32m'; YEL=$'\033[33m'; CYN=$'\033[36m'; RST=$'\033[0m'
+else
+  BOLD=''; DIM=''; RED=''; GRN=''; YEL=''; CYN=''; RST=''
+fi
+info() { printf '%s\n' "${DIM}sim:${RST} $*" >&2; }
+step() { printf '%s\n' "${CYN}${BOLD}==>${RST} ${BOLD}$*${RST}" >&2; }
+warn() { printf '%s\n' "${YEL}sim: warning:${RST} $*" >&2; }
+die()  { printf '%s\n' "${RED}sim: error:${RST} $*" >&2; exit "${2:-1}"; }
+
+# ── preflight: each failure names the exact fix ───────────────────────────────────────────────────
+need_docker() {
+  command -v docker >/dev/null 2>&1 || die "docker is not installed.
+    Fix: install Docker Engine — https://docs.docker.com/engine/install/  (then re-run)."
+  if ! docker info >/dev/null 2>&1; then
+    if docker info 2>&1 | grep -qiE 'permission denied|dial unix.*permission'; then
+      die "cannot talk to the docker daemon (permission denied).
+    Fix: add yourself to the 'docker' group — 'sudo usermod -aG docker \$USER' then log out/in,
+         or run this command under sudo."
+    fi
+    die "the docker daemon is not reachable.
+    Fix: start it — 'sudo systemctl start docker' (or launch Docker Desktop) — then re-run."
+  fi
+}
+need_uinput() {
+  if [ ! -e /dev/uinput ]; then
+    die "/dev/uinput is missing — the sim synthesizes the device through the uinput kernel module.
+    Fix: load it on the HOST — 'sudo modprobe uinput'  (add 'uinput' to /etc/modules to persist)."
+  fi
+}
+# The nested sim runs as root INSIDE the container (PID-1 root), so no host root is needed for the app
+# itself — only docker access (checked above). We surface this explicitly so "root missing" is never a
+# mystery: if docker needs sudo on this host, need_docker already said so.
+
+# ── image build (cached; a no-op rebuild is fast) ─────────────────────────────────────────────────
+build_base() {
+  step "Building ${IMAGE} (pinned, reproducible-from-clean — cached layers make repeat builds fast)"
+  docker build -t "$IMAGE" "$HERE" >&2
+}
+build_demo() {
+  step "Building ${DEMO_IMAGE} (base + video SDL3/X11 + Xvfb — the clickable-skin demo image)"
+  docker build --target demo -t "$DEMO_IMAGE" "$HERE" >&2
+}
+
+# ── device discovery + validation (a clean error beats a container traceback) ─────────────────────
+list_devices() { # <image> — the device ids that ship a descriptor in the image
+  docker run --rm "${1:-$IMAGE}" shell -lc 'ls -1 /opt/pf/platform/devices 2>/dev/null | sort' 2>/dev/null
+}
+validate_devices() { # <image> <devices...> — die with a helpful list on an unknown device
+  local img="$1"; shift
+  local avail; avail="$(list_devices "$img")"
+  [ -n "$avail" ] || return 0   # probe failed → don't block; the suite will surface any real problem
+  local d
+  for d in "$@"; do
+    printf '%s\n' "$avail" | grep -qxF "$d" || die "unknown device '$d'. This image ships: $(echo $avail | tr '\n' ' ')
+    List them any time with: ./sim devices"
+  done
+}
+
+# ── the headless logical suites (the SAME entrypoints CI runs) ────────────────────────────────────
+# network none: the suite runs entirely from baked, pinned artifacts (docker/README.md) — proving the
+# honest-offline property AND shrinking blast radius. Set SIM_NETWORK=1 to re-enable if ever needed.
+_net=(); [ "${SIM_NETWORK:-0}" = "1" ] || _net=(--network none)
+run_suite() { # <suite> <devices...>
+  local suite="$1"; shift
+  step "pf-sim check-${suite} $*  ${DIM}(native x86 == arm64-under-qemu-tsp, byte-identical)${RST}"
+  docker run --rm "${_net[@]}" "${SIM_CAPS[@]}" "$IMAGE" "check-${suite}" "$@"
+}
+run_headless() { # <devices...> — run the full logical matrix (control + sensor + skin)
+  need_docker; need_uinput; build_base; validate_devices "$IMAGE" "$@"
+  local suite rc=0
+  for suite in control sensor skin; do
+    run_suite "$suite" "$@" || rc=$?
+  done
+  if [ "$rc" -eq 0 ]; then printf '%s\n' "${GRN}${BOLD}✓ ALL SUITES PASS${RST} (control + sensor + skin) for: $*" >&2
+  else printf '%s\n' "${RED}${BOLD}✗ suite failure${RST} (exit ${rc}) — see the FAIL lines above" >&2; fi
+  return "$rc"
+}
+
+# ── commands ──────────────────────────────────────────────────────────────────────────────────────
+cmd_run() {
+  [ $# -ge 1 ] || die "usage: sim run <device>   (e.g. sim run a133)   — one device's headless suite"
+  [ $# -eq 1 ] || die "sim run takes exactly ONE device (got: $*). For the full matrix use 'sim check'."
+  run_headless "$1"
+}
+
+cmd_check() { # the full CI matrix, exactly as sim-gate.yml runs it
+  local rm_image=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --rm-image) rm_image=1; shift ;;   # CI convenience: drop the built image afterward
+      --) shift; break ;;
+      -*) die "sim check: unknown flag '$1'" ;;
+      *) break ;;
+    esac
+  done
+  [ $# -gt 0 ] || set -- $DEVICES_DEFAULT
+  local rc=0
+  run_headless "$@" || rc=$?
+  [ "$rm_image" = "1" ] && { docker image rm -f "$IMAGE" >/dev/null 2>&1 || true; }
+  return "$rc"
+}
+
+cmd_gui() {
+  local device="${1:-a133}"
+  need_docker; need_uinput; build_demo; validate_devices "$DEMO_IMAGE" "$device"
+  if [ -n "${DISPLAY:-}" ] && xdpyinfo_ok; then
+    # DISPLAY PATH (chosen): forward the host X11 unix socket + xauth cookie INTO the container. We do
+    # NOT build a native-host GUI (that would drag the video SDL3 + skin-render-window build back onto
+    # the host toolchain — the exact assumption the container exists to kill). Wayland-only hosts use
+    # their XWayland ($DISPLAY is set here), so the same X-socket passthrough works. Tradeoff documented
+    # in docs/CLI.md. The container app is root, so we scope local X access to root.
+    local xauth="${XAUTHORITY:-$HOME/.Xauthority}"
+    local xauth_args=(); [ -f "$xauth" ] && xauth_args=(-e XAUTHORITY=/tmp/.pf-xauth -v "$xauth:/tmp/.pf-xauth:ro")
+    command -v xhost >/dev/null 2>&1 && xhost +local:root >/dev/null 2>&1 || true
+    step "sim gui ${device} — live clickable skin (X11 passthrough). Press the bezel; close the window to exit."
+    docker run --rm -it "${SIM_CAPS[@]}" \
+      -e DISPLAY="$DISPLAY" "${xauth_args[@]}" -v /tmp/.X11-unix:/tmp/.X11-unix \
+      "$DEMO_IMAGE" window "$device"
+  else
+    warn "no reachable X display (\$DISPLAY='${DISPLAY:-}') — running the autonomous Xvfb self-test instead."
+    warn "  For the LIVE clickable window, run this on a host with an X (or XWayland) display."
+    step "sim gui ${device} — window-selftest (Xvfb): live X11 window + click->light driver loop"
+    docker run --rm "${SIM_CAPS[@]}" "$DEMO_IMAGE" window-selftest "$device"
+  fi
+}
+
+cmd_devices() { # list the virtual devices this image can run (AVD-style discovery)
+  need_docker; build_base
+  step "virtual devices shipped in ${IMAGE}:"
+  local d; list_devices "$IMAGE" | while read -r d; do printf '  %s%s%s\n' "${GRN}" "$d" "${RST}" >&2; done
+}
+
+cmd_build() {
+  need_docker
+  case "${1:-base}" in
+    base) build_base ;;
+    demo) build_demo ;;
+    all)  build_base; build_demo ;;
+    *) die "usage: sim build [base|demo|all]" ;;
+  esac
+}
+
+cmd_shell() { # interactive debug shell inside the (base or demo) container
+  need_docker; need_uinput
+  local img="$IMAGE"; [ "${1:-}" = "demo" ] && { build_demo; img="$DEMO_IMAGE"; } || build_base
+  step "interactive shell in ${img} (the nested sim caps are attached)"
+  docker run --rm -it "${SIM_CAPS[@]}" "$img" shell
+}
+
+cmd_doctor() { # preflight only — the "is this host ready?" report
+  step "sim doctor — host readiness for the virtual device simulator"
+  local ok=1
+  if command -v docker >/dev/null 2>&1; then printf '  %s docker installed (%s)\n' "${GRN}✓${RST}" "$(docker --version 2>/dev/null | awk '{print $3}' | tr -d ,)" >&2
+    else printf '  %s docker NOT installed — https://docs.docker.com/engine/install/\n' "${RED}✗${RST}" >&2; ok=0; fi
+  if docker info >/dev/null 2>&1; then printf '  %s docker daemon reachable (no sudo needed)\n' "${GRN}✓${RST}" >&2
+    else printf '  %s docker daemon NOT reachable — start it or add yourself to the docker group\n' "${RED}✗${RST}" >&2; ok=0; fi
+  if [ -e /dev/uinput ]; then printf '  %s /dev/uinput present\n' "${GRN}✓${RST}" >&2
+    else printf '  %s /dev/uinput MISSING — sudo modprobe uinput\n' "${RED}✗${RST}" >&2; ok=0; fi
+  if [ -n "${DISPLAY:-}" ] && xdpyinfo_ok; then printf '  %s X display reachable (%s) — sim gui runs LIVE\n' "${GRN}✓${RST}" "$DISPLAY" >&2
+    else printf '  %s no X display — sim gui falls back to the Xvfb self-test (headless)\n' "${YEL}•${RST}" >&2; fi
+  [ "$ok" = "1" ] && printf '%s\n' "${GRN}${BOLD}ready.${RST} Try: ./sim run a133" >&2 || die "not ready — fix the ✗ items above."
+}
+
+xdpyinfo_ok() { command -v xdpyinfo >/dev/null 2>&1 && xdpyinfo >/dev/null 2>&1; }
+
+cmd_version() {
+  local pc qc sp
+  pc="$(sed -n 's/^commit *= *//p' "$HERE/docker/platform.pin" 2>/dev/null | head -1)"
+  qc="$(sed -n 's/^ARG QEMU_TSP_COMMIT=//p' "$HERE/Dockerfile" 2>/dev/null | head -1)"
+  sp="$(sed -n 's/^tag *= *//p' "$HERE/sdl3/SDL3.pin" 2>/dev/null | head -1)"
+  printf '%s\n' "${BOLD}pocketforge sim CLI${RST} (infra-113 C1) — pinned toolchain:" >&2
+  printf '  platform  %s\n' "${pc:-?}" >&2
+  printf '  qemu-tsp  %s\n' "${qc:-?}" >&2
+  printf '  SDL3      %s\n' "${sp:-?}" >&2
+  printf '  image     %s  (demo: %s)\n' "$IMAGE" "$DEMO_IMAGE" >&2
+}
+
+usage() {
+  cat >&2 <<EOF
+${BOLD}sim${RST} — the PocketForge virtual device simulator, one command.
+
+Run the ${BOLD}identical arm64 app the device runs${RST}, off-hardware, against a Virtual Device
+Backend synthesized from the platform descriptor — the ${BOLD}logical layer${RST} proven in CI on every
+PR. (What it does NOT prove — GPU, WiFi, timing, enforcement, per-SoC graphics — is the hardware
+gate's job: see ${DIM}docs/HONESTY-CONTRACT.md${RST}.)
+
+${BOLD}USAGE${RST}   ./sim <command> [args]
+
+${BOLD}COMMANDS${RST}
+  ${GRN}run${RST} <device>       Boot one virtual device, run its headless logical suite
+                     (control + sensor + skin). e.g. ${DIM}./sim run a133${RST}
+  ${GRN}gui${RST} [device]       Open the clickable .scad-rendered skin — press the bezel and watch
+                     the control light up. Live X11 window on a display host; falls back
+                     to an autonomous Xvfb self-test when headless. ${DIM}default: a133${RST}
+  ${GRN}check${RST} [devices…]   The ${BOLD}full CI matrix${RST}, exactly as sim-gate.yml runs it
+                     (control + sensor + skin over ${DIM}${DEVICES_DEFAULT}${RST}). This is the gate.
+  ${GRN}devices${RST}            List the virtual devices this image can run.
+  ${GRN}build${RST} [base|demo|all]   Build the pinned image(s) without running anything.
+  ${GRN}shell${RST} [demo]       Interactive debug shell inside the container (caps attached).
+  ${GRN}doctor${RST}             Check this host is ready (docker, /dev/uinput, display) — with fixes.
+  ${GRN}version${RST}            Show the pinned platform / qemu-tsp / SDL3 refs.
+
+${BOLD}EXAMPLES${RST}
+  ./sim doctor                 # is my host ready?  (says what to fix)
+  ./sim run a133               # inner-loop: one device, headless
+  ./sim gui a523               # click the bezel — a523 has L3/R3 stick-clicks
+  ./sim check                  # what CI will decide — run before you push
+  SIM_IMAGE=pocketforge-sim:ci-42 ./sim check --rm-image   # CI form (unique tag, clean up)
+
+${BOLD}REQUIREMENTS${RST}  docker (in your group, or sudo) · the host 'uinput' module (sudo modprobe uinput).
+The nested sim runs as root ${BOLD}inside${RST} the container, so no host root is needed for the app.
+Zero env vars to set — the image bakes every pinned path. ${DIM}HONESTY: docs/HONESTY-CONTRACT.md${RST}
+EOF
+}
+
+main() {
+  local cmd="${1:-help}"; shift || true
+  case "$cmd" in
+    run)     cmd_run "$@" ;;
+    gui)     cmd_gui "$@" ;;
+    check)   cmd_check "$@" ;;
+    devices) cmd_devices "$@" ;;
+    build)   cmd_build "$@" ;;
+    shell)   cmd_shell "$@" ;;
+    doctor)  cmd_doctor "$@" ;;
+    version|--version|-V) cmd_version "$@" ;;
+    help|--help|-h) usage ;;
+    *) printf '%s\n' "${RED}sim: unknown command '${cmd}'${RST}" >&2; usage; exit 2 ;;
+  esac
+}
+main "$@"

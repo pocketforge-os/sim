@@ -105,38 +105,25 @@ jobs:
       - name: Ensure uinput module (host node is required for the nested sim)
         run: sudo modprobe uinput || true
 
-      - name: Build pocketforge-sim (pinned, reproducible-from-clean)
-        run: docker build -t "$IMG" .
-
-      # --network none: the headless suite runs entirely from baked, pinned artifacts (no
-      # out-of-band input — docker/README.md), so denying the RUN phase any network shrinks the
-      # blast radius of malicious PR code executing under the elevated caps (no exfil / callout).
-      # The build phase above keeps its network (apt + pinned clones). NOTE(reviewer): confirm the
-      # nested qemu-tsp/bwrap path needs no loopback/network; if it does, drop `--network none`.
-      - name: check-control a133 a523 (ALL DEVICES PASS, native==qemu byte-identical)
-        run: |
-          docker run --rm --network none \
-            --device /dev/uinput --device-cgroup-rule "c 13:* rmw" -v /dev/input:/dev/input \
-            --cap-add SYS_ADMIN --security-opt apparmor=unconfined --security-opt seccomp=unconfined \
-            "$IMG" check-control a133 a523
-
-      - name: check-sensor a133 a523 (ALL DEVICES PASS, native==qemu byte-identical)
-        run: |
-          docker run --rm --network none \
-            --device /dev/uinput --device-cgroup-rule "c 13:* rmw" -v /dev/input:/dev/input \
-            --cap-add SYS_ADMIN --security-opt apparmor=unconfined --security-opt seccomp=unconfined \
-            "$IMG" check-sensor a133 a523
-
-      # check-skin joins the gate as of tsp-65jc.1 (infra-113 A1): the doc §5 gate matrix lists
-      # check-skin as an a133 suite, and A1's first-class item is verifying the .scad-rendered skin
-      # end-to-end (GUI-click==headless-inject + compositor geometry, native==qemu byte-identical).
-      # Running it here means the PR's own CI run proves the clickable skin green on the runner.
-      - name: check-skin a133 a523 (ALL DEVICES PASS, native==qemu byte-identical)
-        run: |
-          docker run --rm --network none \
-            --device /dev/uinput --device-cgroup-rule "c 13:* rmw" -v /dev/input:/dev/input \
-            --cap-add SYS_ADMIN --security-opt apparmor=unconfined --security-opt seccomp=unconfined \
-            "$IMG" check-skin a133 a523
+      # infra-113 C1 (D7): the gate runs the LITERAL same entrypoint a developer runs — `./sim check`
+      # — so CI and the dev inner-loop cannot silently drift (the product guarantee this epic exists
+      # to enforce; an equivalence note would be a proxy that can drift). `./sim check a133 a523`
+      # BUILDS the pinned image (network ON — apt + pinned clones) then runs check-control +
+      # check-sensor + check-skin over a133 a523 with the exact nested-sim caps (--device /dev/uinput,
+      # --device-cgroup-rule "c 13:* rmw", -v /dev/input:/dev/input, --cap-add SYS_ADMIN, unconfined
+      # apparmor+seccomp — docker/README.md, the tsp-qc1.2 nesting verdict) and --network none on the
+      # RUN phase. check-skin rides the same CLI (it joined the gate in tsp-65jc.1/A1 — the PR's own
+      # run proves the .scad clickable skin green on the runner).
+      #
+      # --network none: the suite runs entirely from baked, pinned artifacts (docker/README.md), so
+      # denying the RUN phase any network shrinks the blast radius of malicious PR code under the
+      # elevated caps (no exfil/callout); the BUILD phase keeps its network. The CLI applies
+      # --network none by default and exposes SIM_NETWORK=1 as the escape hatch. NOTE(reviewer):
+      # confirm the nested qemu-tsp/bwrap path needs no loopback; if it does, set SIM_NETWORK=1 here
+      # rather than losing the flag. SIM_IMAGE scopes the image tag to this run (concurrent PRs on the
+      # shared runner don't collide); the cleanup step below removes it.
+      - name: sim check a133 a523 (the developer CLI IS the gate; ALL PASS, native==qemu byte-identical)
+        run: SIM_IMAGE="$IMG" ./sim check a133 a523
 
       - name: Cleanup CI image
         if: always()
