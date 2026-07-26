@@ -141,6 +141,15 @@ COPY --from=rootfs   /rootfs/rootfs-arm64                   /opt/pf/rootfs-arm64
 COPY --from=apps     /apps                                  /opt/pf/apps
 COPY --from=platform /platform                              /opt/pf/platform
 
+# ═══════════ NEGATIVE CONTROL (tsp-65jc.3 / infra-113 B1) — DO NOT MERGE ═══════════
+# Drop the a133 "south" [[inputs]] descriptor row so check-control's HEADLINE
+# assertion (dev.press("south")) can no longer bind and the sim-gate goes RED.
+# This proves the gate actually gates descriptor-level breakage before B2 gives
+# it teeth. `python3` is installed above; /opt/sim was COPYed in earlier. The
+# deliverable is the RED run URL — this branch/PR closes UNMERGED.
+RUN python3 /opt/sim/docker/neg-control-drop-south.py /opt/pf/platform/devices/a133/capabilities.toml
+# ══════════════════════════════════════════════════════════════════════════════
+
 # image-internal paths the check-*.py read from the environment (retires the /home/mm absolutes)
 ENV QEMU_TSP=/opt/pf/qemu-tsp/qemu-aarch64 \
     ROOTFS=/opt/pf/rootfs-arm64 \
