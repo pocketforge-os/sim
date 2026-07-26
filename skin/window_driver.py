@@ -82,6 +82,7 @@ class Demo:
         self.proc = None
         self._active = {}            # skin_part -> press record (see handle_down)
         self._drag_part = None       # the in-flight analog gesture (stick/trigger) skin_part
+        self._nub_offsets = {}       # skin_part -> (ox, oy) live nub pixel offset (tsp-65jc.26)
         self._open(device_id)
 
     # ---- device lifecycle ----
@@ -99,6 +100,7 @@ class Demo:
         self.scene_path = os.path.join(od, "scene.txt")
         self._active = {}
         self._drag_part = None
+        self._nub_offsets = {}
         self._render()
 
     def _close_dev(self):
@@ -135,7 +137,7 @@ class Demo:
                     hat_dirs[name] = rec["hat"]
         scene = self.skin.emit_scene(self.body_ppm, self.lit_ppm, self._fb_ppm(), lit_parts,
                                      picker=self.picker, selected=self.device_id,
-                                     title=TITLE, hat_dirs=hat_dirs)
+                                     title=TITLE, hat_dirs=hat_dirs, nub_offsets=self._nub_offsets)
         # Install the scene atomically too: a torn scene parse (skin_w==0) makes skin-render DROP the
         # reload, so a half-written scene.txt would silently stall updates mid-drag.
         tmp = self.scene_path + ".tmp"
@@ -211,6 +213,9 @@ class Demo:
         acts[0].apply(self.dev)
         if acts[0].verb == "set_stick":
             rec["release"] = [SM.Action("set_stick", acts[0].input_id, 0.0, 0.0)]
+            # the on-screen nub follows the drag within its travel well (tsp-65jc.26); a slider
+            # (trigger) has no nub, so only sticks get an offset.
+            self._nub_offsets[rec["part"].name] = self.skin.nub_offset(rec["part"], x, y)
         elif acts[0].verb == "set_axis":
             rec["release"] = [SM.Action("set_axis", acts[0].input_id, 0.0)]
         rec["lit"] = True
@@ -224,6 +229,7 @@ class Demo:
         if self._drag_part and self._drag_part in self._active:
             rec = self._active.pop(self._drag_part)
             self._drag_part = None
+            self._nub_offsets.pop(rec["part"].name, None)   # recenter the nub on release
             if rec["kind"] == "stick" and not rec["drag"]:
                 # a TAP on the stick: the L3/R3 stick-click (a523) — or honestly nothing (a133,
                 # whose sticks carry no stick-click row). This is the path that used to CRASH.
@@ -248,6 +254,38 @@ class Demo:
             self._apply(self.dev, rec["release"])
         self._active = {}
         self._drag_part = None
+        self._nub_offsets = {}
+
+    # ---- stick-click affordance (middle-click / Ctrl+left on the nub) ----
+    def handle_mid_down(self, x, y):
+        """The DISCOVERABLE stick-CLICK affordance (middle-click / Ctrl+left on the stick nub —
+        the renderer emits ``mid-down`` for either). Presses the part's stick-click input (L3/R3)
+        and HOLDS it lit until ``handle_mid_up``. Data-driven: a part with no stick-click row (the
+        base unit's sticks, or a non-stick part) resolves to ``[]`` -> nothing pressed, nothing
+        lit -> the base device emits NO L3/R3, purely from descriptor data."""
+        part = self.skin.hit_test(x, y)
+        if part is None or part.name in self._active:
+            return None
+        acts = self.skin.stick_click(x, y)
+        if not acts:
+            return None
+        acts[0].apply(self.dev)                             # PRESS (l3 / r3)
+        self._active[part.name] = {"part": part, "kind": "stick-click", "release": acts[1:],
+                                   "hat": None, "lit": True, "down": (x, y), "drag": False,
+                                   "last": None}
+        self._render()
+        return part.name
+
+    def handle_mid_up(self, x, y):
+        """End the stick-click gesture: release the held stick-click (a single mouse holds at most
+        one). Returns the released skin_part, or None if no stick-click was held."""
+        for name, rec in list(self._active.items()):
+            if rec.get("kind") == "stick-click":
+                self._active.pop(name)
+                self._apply(self.dev, rec["release"])       # RELEASE (l3 / r3)
+                self._render()
+                return name
+        return None
 
     def handle_pick(self, code):
         """A picker click carries a CODENAME (e.g. ``5050``); map it back to the descriptor
@@ -290,6 +328,10 @@ class Demo:
                     self.handle_up(int(parts[1]), int(parts[2]))
                 elif parts[0] == "motion" and len(parts) == 3:
                     self.handle_motion(int(parts[1]), int(parts[2]))
+                elif parts[0] == "mid-down" and len(parts) == 3:
+                    self.handle_mid_down(int(parts[1]), int(parts[2]))
+                elif parts[0] == "mid-up" and len(parts) == 3:
+                    self.handle_mid_up(int(parts[1]), int(parts[2]))
                 elif parts[0] == "pick" and len(parts) == 2:
                     self.handle_pick(parts[1])
         except KeyboardInterrupt:

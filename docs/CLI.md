@@ -37,6 +37,27 @@ Zero environment variables to set — the image bakes every pinned path (`QEMU_T
 `PLATFORM`, the app binaries, the SDL3 libs). `SIM_IMAGE` / `SIM_DEMO_IMAGE` override the image tags
 (CI passes a run-scoped tag); `SIM_NETWORK=1` re-enables network on the otherwise-offline run phase.
 
+## `sim gui` — driving the bezel controls
+
+The live window turns every mouse gesture into the **same descriptor-resolved control-surface call**
+the headless suite injects. The gestures:
+
+| Control | Gesture | What it does |
+|---------|---------|--------------|
+| Buttons / D-pad | **left-click** (press-and-hold to keep it held) | `press`/`release` (D-pad: deflect the clicked arm) |
+| Analog stick | **left-drag** the nub | `set_stick` — and the **nub visually follows the drag** within its well and **recenters when you release** |
+| Trigger | **left-drag** along the slider | `set_axis` sweep 0→1 |
+| **Stick click (L3/R3)** | **middle-click** the nub — or **Ctrl + left-click** it (for a trackpad with no middle button) | `press`/`release` **BTN_THUMBL / BTN_THUMBR**, held while the button is down |
+| Device switch | **left-click** a picker entry | swap the virtual device |
+
+**Stick click is a per-device capability, driven purely by descriptor data — never a device-name
+branch in the GUI.** The Pro S (`a523`) descriptor declares `kind = "stick-click"` inputs (`l3`/`r3`)
+on the stick parts, so middle-clicking a nub emits L3/R3 and lights it. The base unit (`a133`)
+declares **no** stick-click row, so the identical gesture resolves to nothing and the base emits **no**
+L3/R3 — the difference is one pair of rows in `capabilities.toml`, zero GUI code. (A bare left-*tap*
+on a clickable nub — a press+release with no drag — also fires the stick-click; middle-click / Ctrl+left
+is the explicit, discoverable form.)
+
 ## `sim gui` — the display-path tradeoff (the deliberate decision)
 
 `sim gui` needs to put a **real window** on your screen from **inside the container**. Two shapes were
