@@ -19,10 +19,36 @@ Pinned inputs (every external ref, all cloned/pulled from clean — no out-of-ba
 `debian:bookworm@sha256:30482e87…` (multi-arch index — amd64 build+runtime, arm64 rootfs), the
 `qemu-tsp` fork commit (which pins upstream qemu v8.2.2), SDL3 `release-3.4.10` (`sim/sdl3/SDL3.pin`),
 and the `platform` repo cloned directly at the pinned commit (`docker/platform.pin`; platform is
-**public** as of tsp-qc1.4 — this closed the former private-archive gap). **Residual
-reproducible-from-clean gap (named):** apt installs from the live bookworm suite, not a
-`snapshot.debian.org` timestamp — a rebuild months later may pull newer point-release packages.
-Hardening follow-up: pin apt to a snapshot mirror.
+**public** as of tsp-qc1.4 — this closed the former private-archive gap). The **apt layer is now
+pinned** to a recorded `snapshot.debian.org` timestamp (`ARG SNAPSHOT_TIMESTAMP` in the Dockerfile —
+tsp-65jc.17, infra-113 D11 tail), closing the last "rebuild months later may pull newer
+point-release packages" gap: a clean rebuild resolves every build-time `apt-get install` against one
+frozen archive snapshot.
+
+### Bumping the apt snapshot pin
+
+Refreshing the pin is a **deliberate, one-line change** — never a silent drift. To move to a newer
+Debian point release:
+
+1. Pick a timestamp that exists on the archive (format `YYYYMMDDThhmmssZ`), e.g. verify it resolves:
+   ```bash
+   TS=20260720T000000Z
+   curl -sI "http://snapshot.debian.org/archive/debian/$TS/dists/bookworm/Release" | head -1   # expect 200
+   ```
+2. Edit the single `ARG SNAPSHOT_TIMESTAMP=…` line near the top of [`../Dockerfile`](../Dockerfile)
+   (and refresh its verifying comment with the new date + what you observed).
+3. Rebuild **from clean, no cache** and run the suite green before merging:
+   ```bash
+   docker build --no-cache -t pocketforge-sim .
+   ./sim check                     # or: docker run … pocketforge-sim check-control a133 a523
+   ```
+4. Record the old→new image-digest delta in the bump's PR/bead.
+
+**Policy:** bump deliberately (a security refresh, a needed newer package), never silently. The two
+base stages (`toolchain`, `runtime`) set `Acquire::Check-Valid-Until=false` on purpose — snapshot
+serves the *historical* Release files, whose `Valid-Until` window (notably `bookworm-security`'s) is
+already past on any later rebuild, so without it `apt-get update` would reject the pinned snapshot as
+expired. That flag is what makes the pin reproducible **forever**, not a workaround to hide.
 
 ## Run — the nested-container caps (the `tsp-qc1.2` spike verdict)
 
