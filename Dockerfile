@@ -33,10 +33,11 @@ ARG ROOTFS_PLATFORM=linux/arm64
 ARG QEMU_TSP_REPO=https://github.com/pocketforge-os/qemu-tsp.git
 ARG QEMU_TSP_COMMIT=329c754ad34e4b8062f2a941ab35383811df70bf
 # platform is PUBLIC (tsp-qc1.4) -> cloned directly at the pinned commit below (origin/main;
-# refreshed to current main @ PR #67 in tsp-65jc.1 — baselines re-generated against the three
-# post-June descriptor waves). Pin of record: docker/platform.pin.
+# refreshed to main @ PR #77 in tsp-65jc.18 — the Pro S .scad skin folded into the a523 row, so
+# a523 baselines re-generated against the model-rendered skin; a133 unchanged). Pin of record:
+# docker/platform.pin (this ARG is the operative value ./sim build uses; keep the two in sync).
 ARG PLATFORM_REPO=https://github.com/pocketforge-os/platform.git
-ARG PLATFORM_COMMIT=4ae14c56da2624ca75ec5ae5b328b37e047d264a
+ARG PLATFORM_COMMIT=9ed8a2e1da1ea8447cfe6225c96fb597c8f76051
 
 # ───────────────────────────── toolchain base (x86) ─────────────────────────────
 FROM debian:bookworm@${DEBIAN_DIGEST} AS toolchain
