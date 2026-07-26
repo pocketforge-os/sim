@@ -55,6 +55,7 @@ typedef struct {
     Part parts[MAXPART]; int nparts;
     Pick picks[MAXPICK]; int npicks;
     char title[256];
+    char view[24]; int view_idx, view_count;   // active view (tsp-65jc.27): rotate affordance
 } Scene;
 
 // ---- PPM (P6) reader: -> malloc'd RGB + dims ----
@@ -148,6 +149,8 @@ static void outline(SDL_Renderer *r, int x, int y, int w, int h, int cr, int cg,
 static int parse_scene(FILE *f, Scene *sc) {
     memset(sc, 0, sizeof(*sc));
     strcpy(sc->rot, "none");
+    strcpy(sc->view, "front");
+    sc->view_count = 1;
     char line[1024];
     while (fgets(line, sizeof(line), f)) {
         char *nl = strchr(line, '\n'); if (nl) *nl = 0;
@@ -183,6 +186,12 @@ static int parse_scene(FILE *f, Scene *sc) {
             p->sel = atoi(strtok(NULL, " "));
             char *model = strtok(NULL, "");           // rest-of-line (may contain spaces)
             if (model) { while (*model == ' ') model++; strncpy(p->model, model, 47); }
+        } else if (!strcmp(tok, "view")) {
+            char *name = strtok(NULL, " ");
+            char *idx = strtok(NULL, " "), *cnt = strtok(NULL, " ");
+            if (name) strncpy(sc->view, name, 23);
+            sc->view_idx = idx ? atoi(idx) : 0;
+            sc->view_count = cnt ? atoi(cnt) : 1;
         } else if (!strcmp(tok, "title")) {
             char *rest = strtok(NULL, "");
             if (rest) strncpy(sc->title, rest, 255);
@@ -195,6 +204,28 @@ static int parse_scene(FILE *f, Scene *sc) {
 static int bezel_ox(const Scene *sc) { return sc->npicks ? PANEL_W : 0; }
 static int total_w(const Scene *sc) { return bezel_ox(sc) + sc->skin_w; }
 static int total_h(const Scene *sc) { return sc->skin_h; }
+
+// Rotate affordance (tsp-65jc.27): a `< VIEWNAME >` control at top-centre of the bezel. Present
+// only when the scene carries more than one view. ONE geometry function feeds both the renderer
+// and the click hit-test, so a click always lands where the arrow was drawn. Coords are window
+// space (bezel already offset by ox). Returns 1 when the widget is shown, 0 otherwise.
+#define ROT_BW 40
+#define ROT_BH 34
+#define ROT_LW 168
+#define ROT_Y  8
+static int rotate_widget(const Scene *sc, int ox, SDL_FRect *lbtn, SDL_FRect *label,
+                         SDL_FRect *rbtn) {
+    if (sc->view_count <= 1) return 0;
+    int cx = ox + sc->skin_w / 2;
+    *label = (SDL_FRect){(float)(cx - ROT_LW / 2), ROT_Y, ROT_LW, ROT_BH};
+    *lbtn  = (SDL_FRect){(float)(cx - ROT_LW / 2 - ROT_BW - 6), ROT_Y, ROT_BW, ROT_BH};
+    *rbtn  = (SDL_FRect){(float)(cx + ROT_LW / 2 + 6), ROT_Y, ROT_BW, ROT_BH};
+    return 1;
+}
+
+static int point_in(const SDL_FRect *r, int x, int y) {
+    return x >= r->x && x < r->x + r->w && y >= r->y && y < r->y + r->h;
+}
 
 static void render_scene(SDL_Renderer *r, Scene *sc, int show_outline) {
     int ox = bezel_ox(sc);
@@ -321,6 +352,29 @@ static void render_scene(SDL_Renderer *r, Scene *sc, int show_outline) {
         if (sc->title[0]) draw_text(r, 18, sc->skin_h - 30, 2, sc->title, 130, 200, 150);
     }
 
+    // 5) rotate affordance: `< VIEWNAME >` at top-centre (only for multi-view devices). The
+    //    arrows step views; the whole widget is drawn from the SAME geometry the click hit-test
+    //    reads, so a click lands on the drawn arrow. Keyboard Left/Right/Tab do the same.
+    SDL_FRect lbtn, label, rbtn;
+    if (rotate_widget(sc, ox, &lbtn, &label, &rbtn)) {
+        fill(r, (int)label.x, (int)label.y, (int)label.w, (int)label.h, 30, 32, 40);
+        outline(r, (int)label.x, (int)label.y, (int)label.w, (int)label.h, 90, 96, 112);
+        for (SDL_FRect *b = (SDL_FRect[]){lbtn, rbtn, {0,0,0,0}}; b->w; b++) {
+            fill(r, (int)b->x, (int)b->y, (int)b->w, (int)b->h, 46, 92, 150);
+            outline(r, (int)b->x, (int)b->y, (int)b->w, (int)b->h, 120, 180, 240);
+        }
+        draw_text(r, (int)lbtn.x + 15, (int)lbtn.y + 10, 2, "<", 235, 238, 245);
+        draw_text(r, (int)rbtn.x + 15, (int)rbtn.y + 10, 2, ">", 235, 238, 245);
+        char up[24]; int i = 0;
+        for (; sc->view[i] && i < 23; i++)
+            up[i] = (sc->view[i] >= 'a' && sc->view[i] <= 'z') ? sc->view[i] - 32 : sc->view[i];
+        up[i] = 0;
+        // centre the label text: FONT advance = (FONT_W+1)*scale, scale 2.
+        int tw = (int)strlen(up) * (FONT_W + 1) * 2;
+        draw_text(r, (int)(label.x + (label.w - tw) / 2), (int)label.y + 10, 2, up,
+                  235, 238, 245);
+    }
+
     // release this frame's textures + the kept body RGB (render_scene runs per reload — a live
     // drag reloads on every motion, so leaking these would grow unboundedly during a drag).
     if (body) SDL_DestroyTexture(body);
@@ -404,12 +458,30 @@ int main(int argc, char **argv) {
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
             if (e.type == SDL_EVENT_QUIT) running = 0;
+            else if (e.type == SDL_EVENT_KEY_DOWN) {
+                // Left/Right/Tab rotate the device between views (tsp-65jc.27).
+                SDL_Keycode k = e.key.key;
+                if (k == SDLK_LEFT) { printf("view prev\n"); fflush(stdout); }
+                else if (k == SDLK_RIGHT || k == SDLK_TAB) {
+                    printf("view next\n"); fflush(stdout);
+                }
+            }
             else if (e.type == SDL_EVENT_MOUSE_BUTTON_DOWN) {
                 int ox = bezel_ox(&sc);
                 int mx = (int)e.button.x, my = (int)e.button.y;
                 int on_panel = (ox && mx < PANEL_W);
                 int ctrl = (SDL_GetModState() & SDL_KMOD_CTRL) != 0;
-                if (!on_panel && (e.button.button == SDL_BUTTON_MIDDLE
+                // rotate affordance first: a left-click on the `< VIEW >` widget steps views and
+                // does NOT fall through to a bezel press.
+                SDL_FRect lb, la, rb;
+                int on_rot = (e.button.button == SDL_BUTTON_LEFT)
+                             && rotate_widget(&sc, ox, &lb, &la, &rb)
+                             && (point_in(&lb, mx, my) || point_in(&la, mx, my)
+                                 || point_in(&rb, mx, my));
+                if (on_rot) {
+                    printf("view %s\n", point_in(&lb, mx, my) ? "prev" : "next");
+                    fflush(stdout);
+                } else if (!on_panel && (e.button.button == SDL_BUTTON_MIDDLE
                                   || (e.button.button == SDL_BUTTON_LEFT && ctrl))) {
                     mid_active = 1;                        // stick-click gesture begins
                     printf("mid-down %d %d\n", mx - ox, my); fflush(stdout);

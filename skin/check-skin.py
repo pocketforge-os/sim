@@ -149,6 +149,34 @@ def geometry_unit_tests(platform_dir):
     line = next((ln for ln in scene.splitlines() if ln.startswith("part stick_l ")), "")
     c.chk(line.split()[-2:] == ["5", "-3"], f"emit_scene stick_l line ends with offset: '{line}'")
 
+    # ---- VIEWS (tsp-65jc.27): the rotatable top-edge view, device-free ----
+    for dev_id, extra in (("a133", set()), ("a523", {"btn_home"})):
+        sk = SM.Skin(dev_id, platform_dir)
+        c.chk(sk.view_names() == ["front", "top"],
+              f"{dev_id} views == ['front','top'] (got {sk.view_names()})")
+        c.chk(sk.active_view == "front" and sk.display_rect is not None,
+              f"{dev_id} defaults to front (fb display_rect present)")
+        # rotate forward then back — set/next/prev cycle
+        c.chk(sk.next_view().name == "top" and sk.active_view == "top", f"{dev_id} next_view -> top")
+        top_parts = {p.name for p in sk.ordered_parts()}
+        c.chk(top_parts == {"btn_l1", "btn_r1", "trig_l", "trig_r"} | extra,
+              f"{dev_id} top view controls == shoulders/triggers{'+home' if extra else ''} (got {sorted(top_parts)})")
+        c.chk(sk.display_rect is None, f"{dev_id} top view has NO display_rect (edge view, no fb)")
+        c.chk(sk.prev_view().name == "front" and sk.active_view == "front",
+              f"{dev_id} prev_view -> back to front")
+        # a top-view scene carries the view line + fb '-' (no screen to composite)
+        sk.set_view("top")
+        top_scene = sk.emit_scene("b.ppm", "l.ppm", "ignored.ppm", set())
+        c.chk(any(ln == "view top 1 2" for ln in top_scene.splitlines()),
+              f"{dev_id} emit_scene(top) carries 'view top 1 2'")
+        c.chk(any(ln.startswith("fb - ") for ln in top_scene.splitlines()),
+              f"{dev_id} emit_scene(top) emits 'fb -' (edge view has no framebuffer)")
+        # the front scene still composites the fb, unchanged
+        sk.set_view("front")
+        front_scene = sk.emit_scene("b.ppm", "l.ppm", "fb.ppm", set())
+        c.chk(any(ln.startswith("fb fb.ppm ") for ln in front_scene.splitlines()),
+              f"{dev_id} front view still composites the fb")
+
     print(f"geometry unit tests: {'PASS' if not c.fails else 'FAIL'} ({len(c.fails)} fail)")
     return c.fails
 
@@ -277,6 +305,47 @@ def run_device(device_id, platform_dir, launcher, outdir, apps, do_render):
                     dev.press(iid); c.chk(False, f"absent '{iid}': press should raise")
                 except HardwareAbsent:
                     c.chk(True, f"absent '{iid}': typed hardware-absent (no crash)")
+
+        # ---- D. PER-VIEW proof (tsp-65jc.27): rotate to each non-front view and prove its
+        #         top-edge controls resolve to the SAME control_surface inject and REACH THE GUEST
+        #         (GUI-click == headless-inject holds PER VIEW). The guest fb is view-independent,
+        #         so light_check/slider readback proves the top-view click drove the same guest
+        #         event as a front-view click would. Runs on BOTH launchers -> its snapshots join
+        #         the native==qemu byte-parity check below, extending parity to the top view.
+        for view_name in skin.view_names():
+            if view_name == "front":
+                continue
+            skin.set_view(view_name)
+            proven = 0
+            for p in skin.ordered_parts():
+                iid, kind = p.inputs[0]["id"], p.kind
+                rx, ry, rw, rh = p.rect
+                cx, cy = _center(p.rect)
+                if kind == "button":
+                    gui = skin.tap(cx, cy)
+                    exp = [SM.Action("press", iid), SM.Action("release", iid)]
+                    c.chk(gui == exp,
+                          f"[{view_name}] TAP {p.name} -> {[a.as_tuple() for a in gui]} "
+                          f"== inject press/release({iid})")
+                    gui[0].apply(dev); dev.snapshot(f"{view_name}_{iid}_press")
+                    light_check(p.name, True, f"[{view_name}] {iid} press")
+                    gui[1].apply(dev); dev.snapshot(f"{view_name}_{iid}_release")
+                    light_check(p.name, False, f"[{view_name}] {iid} release")
+                    proven += 1
+                elif kind == "trigger":
+                    gui = skin.drag(cx, cy, rx + rw, cy)          # full deflection
+                    exp = [SM.Action("set_axis", iid, 1.0)]
+                    c.chk(gui == exp,
+                          f"[{view_name}] DRAG {p.name} slider->1.0 -> {[a.as_tuple() for a in gui]} "
+                          f"== inject set_axis({iid},1.0)")
+                    gui[0].apply(dev); dev.snapshot(f"{view_name}_{iid}_100")
+                    c.chk(dev.slider(p.name).at(1.0),
+                          f"[{view_name}] {iid} slider at 1.0 (guest reached from top view)")
+                    dev.set_axis(iid, 0.0); dev.snapshot(f"{view_name}_{iid}_000")
+                    proven += 1
+            c.chk(proven >= 4,
+                  f"[{view_name}] proved >=4 top-edge controls clickable->guest (got {proven})")
+        skin.set_view("front")
 
         # ---- owner AVD gallery (full composition with picker), qemu only ----
         # Drives explicit states to showcase the directional D-pad + the stick calibration box

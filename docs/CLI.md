@@ -48,6 +48,7 @@ the headless suite injects. The gestures:
 | Analog stick | **left-drag** the nub | `set_stick` — and the **nub visually follows the drag** within its well and **recenters when you release** |
 | Trigger | **left-drag** along the slider | `set_axis` sweep 0→1 |
 | **Stick click (L3/R3)** | **middle-click** the nub — or **Ctrl + left-click** it (for a trackpad with no middle button) | `press`/`release` **BTN_THUMBL / BTN_THUMBR**, held while the button is down |
+| **Rotate the device** | the **`< VIEW >`** arrows at top-centre, the **Left/Right (or Tab)** keys, or a **left-drag on empty bezel** | switch between the **front** and **top-edge** views |
 | Device switch | **left-click** a picker entry | swap the virtual device |
 
 **Stick click is a per-device capability, driven purely by descriptor data — never a device-name
@@ -57,6 +58,14 @@ declares **no** stick-click row, so the identical gesture resolves to nothing an
 L3/R3 — the difference is one pair of rows in `capabilities.toml`, zero GUI code. (A bare left-*tap*
 on a clickable nub — a press+release with no drag — also fires the stick-click; middle-click / Ctrl+left
 is the explicit, discoverable form.)
+
+**Rotating to the top-edge view (tsp-65jc.27).** The skins are pre-baked orthographic renders, so
+"rotation" is a **discrete snap** between rendered views, not free 3D. Both devices carry a **`top`**
+view rendered from the same `.scad` — a dedicated top-edge shot where the **shoulders/triggers**
+(`L1/L2/R1/R2`, plus the Pro S **HOME** button) are prominent and **clickable**, resolving through the
+same descriptor to the same control-surface call as the front view (so "GUI click == headless inject"
+holds per view). The screen (live fb) shows only on the **front** view — the top view is bezel + its
+controls. A device with no extra views simply shows no rotate affordance.
 
 ## `sim gui` — the display-path tradeoff (the deliberate decision)
 

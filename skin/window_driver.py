@@ -55,6 +55,11 @@ TITLE = "PocketForge - Virtual Device"
 # down+up on a stick stays a TAP (the L3/R3 stick-click) rather than a tiny stick deflection.
 DRAG_THRESHOLD = 6
 
+# A horizontal drag that BEGAN off any control (empty bezel) past this many skin px rotates the
+# view (tsp-65jc.27) — the owner's "click-drag". Requiring an off-control start keeps it from ever
+# colliding with an analog stick/trigger drag, which always begins ON a part.
+ROTATE_DRAG_THRESHOLD = 60
+
 
 def _png_to_ppm(png_path, ppm_path):
     w, h, rgb = read_png(png_path)
@@ -83,6 +88,7 @@ class Demo:
         self._active = {}            # skin_part -> press record (see handle_down)
         self._drag_part = None       # the in-flight analog gesture (stick/trigger) skin_part
         self._nub_offsets = {}       # skin_part -> (ox, oy) live nub pixel offset (tsp-65jc.26)
+        self._rotate_drag = None     # a drag that began OFF any control -> rotate the view (.27)
         self._open(device_id)
 
     # ---- device lifecycle ----
@@ -95,13 +101,22 @@ class Demo:
                           app_x86=self.apps[0], app_arm64=self.apps[1],
                           qemu_tsp=self.apps[2], rootfs=self.apps[3])
         self.dev.boot()
-        self.body_ppm = _png_to_ppm(self.skin.body_path, os.path.join(od, "body.ppm"))
-        self.lit_ppm = _png_to_ppm(self.skin.lit_body_path, os.path.join(od, "lit_body.ppm"))
         self.scene_path = os.path.join(od, "scene.txt")
         self._active = {}
         self._drag_part = None
         self._nub_offsets = {}
+        self._rotate_drag = None
+        self._load_view_ppms()
         self._render()
+
+    def _load_view_ppms(self):
+        """Point body/lit ppm at the ACTIVE view's art (tsp-65jc.27). skin.body_path/lit_body_path
+        re-point on set_view, so this runs at open AND on every rotate; per-view filenames cache the
+        conversion so a back-and-forth rotate does not re-decode."""
+        od = self.dev.outdir
+        v = self.skin.active_view
+        self.body_ppm = _png_to_ppm(self.skin.body_path, os.path.join(od, f"body_{v}.ppm"))
+        self.lit_ppm = _png_to_ppm(self.skin.lit_body_path, os.path.join(od, f"lit_body_{v}.ppm"))
 
     def _close_dev(self):
         try:
@@ -163,7 +178,10 @@ class Demo:
         skin_part name (None if nothing lit — outside all parts, a re-press, or a stick down)."""
         part = self.skin.hit_test(x, y)
         if part is None:
+            # a press on empty bezel — arm a possible rotate-drag (fired in handle_motion).
+            self._rotate_drag = {"down": (x, y), "fired": False}
             return None
+        self._rotate_drag = None
         if part.name in self._active:        # already held (re-entrant down) — leave it be
             return part.name
         kind = part.kind
@@ -195,6 +213,12 @@ class Demo:
     def handle_motion(self, x, y):
         """Left button held + moved -> a DRAG. Only the in-flight analog gesture (stick/trigger)
         reacts: the stick deflects, the trigger slides. Digital controls ignore motion (binary)."""
+        if self._rotate_drag and not self._rotate_drag["fired"]:
+            dx = x - self._rotate_drag["down"][0]
+            if abs(dx) >= ROTATE_DRAG_THRESHOLD:
+                self._rotate_drag["fired"] = True   # once per drag
+                self.handle_view("prev" if dx > 0 else "next")
+            return None
         if not self._drag_part:
             return None
         rec = self._active.get(self._drag_part)
@@ -226,6 +250,7 @@ class Demo:
         """Release -> deactivate the gesture. Ends the in-flight analog drag (a stick TAP becomes
         the L3/R3 stick-click; a stick DRAG and any trigger reset to centre/0), else releases the
         held digital control under the up point (chord-safe). Returns the released skin_part."""
+        self._rotate_drag = None
         if self._drag_part and self._drag_part in self._active:
             rec = self._active.pop(self._drag_part)
             self._drag_part = None
@@ -304,6 +329,19 @@ class Demo:
                     return it["device_id"]
         return None
 
+    # ---- view rotation (tsp-65jc.27) ----
+    def handle_view(self, direction):
+        """Rotate the device to the next/prev VIEW (front <-> top). Releases any held press first
+        (a control on the old view has no meaning on the new one), re-points the bezel art at the
+        new view, and re-renders. No-op for a single-view device."""
+        if len(self.skin.view_names()) <= 1:
+            return None
+        self._release_all()
+        self.skin.prev_view() if direction == "prev" else self.skin.next_view()
+        self._load_view_ppms()
+        self._render()
+        return self.skin.active_view
+
     # ---- live window loop ----
     def launch_window(self):
         self.proc = subprocess.Popen(
@@ -334,6 +372,8 @@ class Demo:
                     self.handle_mid_up(int(parts[1]), int(parts[2]))
                 elif parts[0] == "pick" and len(parts) == 2:
                     self.handle_pick(parts[1])
+                elif parts[0] == "view" and len(parts) == 2:
+                    self.handle_view(parts[1])          # prev|next -> rotate the device
         except KeyboardInterrupt:
             pass
         finally:
