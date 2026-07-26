@@ -2,11 +2,12 @@
 # platform is PUBLIC (made public 2026-06-27, tsp-qc1.4), so the Dockerfile clones it directly at
 # the pinned commit below — truly reproducible-from-clean, no out-of-band input.
 repo   = https://github.com/pocketforge-os/platform.git
-commit = 9ed8a2e1da1ea8447cfe6225c96fb597c8f76051
+commit = c98ffcb98041b183202456f283f4a90e82f762b1
 ref    = origin/main
-# Descriptor SHA-256 at this commit (platform main @ PR #77, tsp-65jc.18 — folds the Pro S .scad
-# skin into the a523 row: skins/a523/{body.png,body_lit.png,model-render.json} rendered from the
-# merged trimui-smart-pro-s model, and devices/a523/capabilities.toml [skin.parts] + display_rect
-# reconciled to the model atlas rects. a133 descriptor UNCHANGED from the prior pin):
+# Descriptor SHA-256 at this commit (platform main @ PR #76, tsp-65jc.20 — the B4 data-driven fleet
+# matrix cascade: bumps the pin past ci-matrix.toml so resolve_matrix() reads live posture instead
+# of the fail-closed all-blocking fallback, ACTIVATING a523=advisory. 9ed8a2e1 (prior pin, PR #77)
+# is a linear ancestor; the delta is ci-matrix.toml + caps.py + test_caps.py + sim-descriptor-gate
+# ONLY — devices/a133+a523 descriptors are byte-identical, so the SHAs below are UNCHANGED):
 #   devices/a133/capabilities.toml 1f9ad861637a8e170aa6cde827f461c55117637f641b406f11051e437dbca4ed
 #   devices/a523/capabilities.toml 15a184937bffc0f44c2c38d641e521edc943e0fb41d53a5930229634765e051c
