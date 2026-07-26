@@ -42,6 +42,7 @@ Pure data; device-free; stdlib only. Importable + a small CLI (``skin_model.py p
 """
 import argparse
 import json
+import math
 import os
 import sys
 
@@ -98,6 +99,12 @@ def build_picker(platform_dir):
 # 2-4. SKIN — raw rects, hit-test/gesture->action, compositor geometry
 # ---------------------------------------------------------------------------
 ROTATIONS = {"none": 0, "cw90": 90, "cw180": 180, "cw270": 270}
+
+# Nub visual-tracking travel (tsp-65jc.26): the on-screen stick nub follows the drag within a
+# CIRCULAR well whose radius is this fraction of the stick rect's short side. Small enough that the
+# (whole-control) nub sprite stays inside its rect at full deflection, large enough to read as
+# motion. PURE geometry — the guest deflection is unchanged; this only moves pixels.
+NUB_TRAVEL_FRAC = 0.22
 
 
 def _rotated_dims(w, h, rot):
@@ -287,6 +294,42 @@ class Skin:
             return [Action("set_axis", p.trigger["id"], self._slider_value(fx, fy))]
         return []
 
+    def stick_click(self, x, y):
+        """The stick-CLICK (L3/R3) action sequence at skin point (x, y): ``[press, release]`` of the
+        part's stick-click input, or ``[]`` when the part under (x, y) carries no stick-click row (a
+        a133 stick, or a non-stick part). This is the DISCOVERABLE GUI affordance's resolver
+        (middle-click / modifier+click on the nub), kept SEPARATE from ``tap`` so the explicit
+        click gesture only ever fires a stick-click — never a button/hat/trigger. Data-driven: the
+        descriptor's ``kind = "stick-click"`` input IS the per-device capability, so the GUI never
+        branches on device id, and the base unit (no such row) resolves to ``[]`` -> emits nothing."""
+        p = self.hit_test(x, y)
+        if p is None or p.stick_click is None:
+            return []
+        i = p.stick_click["id"]
+        return [Action("press", i), Action("release", i)]
+
+    @staticmethod
+    def nub_travel(part):
+        """Max nub travel radius (pixels) for a stick part — a fraction of its short side."""
+        _, _, w, h = part.rect
+        return max(1, int(round(min(w, h) * NUB_TRAVEL_FRAC)))
+
+    def nub_offset(self, part, to_x, to_y):
+        """The on-screen nub PIXEL offset ``(ox, oy)`` for a stick drag whose pointer is at
+        ``(to_x, to_y)``, clamped to the circular travel well and recentred (0, 0) at the rect
+        centre. Direction matches ``drag()``'s guest deflection (same ``frac``), so the nub tracks
+        the stick. Returns ``(0, 0)`` for a non-stick part. PURE — unit-tested, device-free."""
+        if part is None or part.stick is None:
+            return (0, 0)
+        fx, fy = part.frac(to_x, to_y)                 # [0,1]^2, clamped to the rect
+        nx, ny = (fx - 0.5) * 2.0, (fy - 0.5) * 2.0    # [-1,1]^2 deflection (matches drag())
+        travel = self.nub_travel(part)
+        ox, oy = nx * travel, ny * travel
+        mag = math.hypot(ox, oy)                        # clamp the VECTOR to the circular well
+        if mag > travel and mag > 0:
+            ox, oy = ox * travel / mag, oy * travel / mag
+        return (int(round(ox)), int(round(oy)))
+
     @staticmethod
     def _hat_dir(part, x, y):
         """Which d-pad direction a click maps to: the dominant axis of the offset from centre."""
@@ -362,23 +405,27 @@ class Skin:
         return lit
 
     def emit_scene(self, body_ppm, lit_body_ppm, fb_ppm, lit_parts, *, title="", picker=None,
-                   selected=None, hat_dirs=None):
+                   selected=None, hat_dirs=None, nub_offsets=None):
         """The whitespace protocol skin-render.c parses (robust strtok in C):
 
             skin <body_ppm> <lit_body_ppm> <skin_w> <skin_h>
             display <x> <y> <w> <h> <composite_rotation>
             fb <fb_ppm|-> <canvas_w> <canvas_h>
-            part <skin_part> <kind> <x> <y> <w> <h> <lit:0|1> <hx> <hy>   (one per skin rect)
+            part <skin_part> <kind> <x> <y> <w> <h> <lit:0|1> <hx> <hy> <ox> <oy>  (one per rect)
             picker <manufacturer> <codename> <selected:0|1> <model...>   (model = rest-of-line,
                                                                           may contain spaces)
             title <text...>
 
         <hx> <hy> are the hat direction (-1/0/1) for a lit d-pad, so the renderer lights ONLY the
-        pressed arm on the bezel (not the whole cross); 0 0 for everything else. NOTE: paths
-        (body/lit_body/fb) must be space-free (they are, under the sim baseline dir); only <model>
-        and <title> may contain spaces, and both are the rest-of-line.
+        pressed arm on the bezel (not the whole cross); 0 0 for everything else. <ox> <oy> are the
+        stick NUB pixel offset (tsp-65jc.26): the renderer draws the stick nub shifted by (ox, oy)
+        so it FOLLOWS a live drag and recenters at (0, 0); 0 0 for everything else (and the C
+        parser defaults them to 0 when the tokens are absent, so an older scene stays valid). NOTE:
+        paths (body/lit_body/fb) must be space-free (they are, under the sim baseline dir); only
+        <model> and <title> may contain spaces, and both are the rest-of-line.
         """
         hat_dirs = hat_dirs or {}
+        nub_offsets = nub_offsets or {}
         lines = [f"skin {body_ppm} {lit_body_ppm} {self.skin_w} {self.skin_h}"]
         x, y, w, h = self.display_rect
         lines.append(f"display {x} {y} {w} {h} {self.composite_rotation()}")
@@ -387,8 +434,9 @@ class Skin:
         for p in self.ordered_parts():
             rx, ry, rw, rh = p.rect
             hx, hy = hat_dirs.get(p.name, (0, 0))
+            ox, oy = nub_offsets.get(p.name, (0, 0))
             lines.append(f"part {p.name} {p.kind} {rx} {ry} {rw} {rh} "
-                         f"{1 if p.name in lit_parts else 0} {hx} {hy}")
+                         f"{1 if p.name in lit_parts else 0} {hx} {hy} {ox} {oy}")
         if picker:
             for man, items in picker.items():
                 for it in items:

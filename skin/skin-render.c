@@ -44,7 +44,7 @@
 #define MAXPART 64
 #define MAXPICK 32
 
-typedef struct { char name[40], kind[16]; int x, y, w, h, lit, hx, hy; } Part;
+typedef struct { char name[40], kind[16]; int x, y, w, h, lit, hx, hy, ox, oy; } Part;
 typedef struct { char man[40], code[24], model[48]; int sel; } Pick;
 
 typedef struct {
@@ -173,6 +173,9 @@ static int parse_scene(FILE *f, Scene *sc) {
             p->lit = atoi(strtok(NULL, " "));
             char *hx = strtok(NULL, " "), *hy = strtok(NULL, " ");
             p->hx = hx ? atoi(hx) : 0; p->hy = hy ? atoi(hy) : 0;
+            // nub pixel offset (tsp-65jc.26): absent in older scenes -> default 0 (no shift).
+            char *ox = strtok(NULL, " "), *oy = strtok(NULL, " ");
+            p->ox = ox ? atoi(ox) : 0; p->oy = oy ? atoi(oy) : 0;
         } else if (!strcmp(tok, "picker") && sc->npicks < MAXPICK) {
             Pick *p = &sc->picks[sc->npicks++];
             strncpy(p->man, strtok(NULL, " "), 39);
@@ -198,10 +201,20 @@ static void render_scene(SDL_Renderer *r, Scene *sc, int show_outline) {
     SDL_SetRenderDrawColor(r, 18, 18, 22, 255);
     SDL_RenderClear(r);
 
-    // 1) unlit chassis
-    int bw, bh;
-    SDL_Texture *body = tex_from_ppm(r, sc->body, &bw, &bh);
-    if (body) { SDL_FRect d = {(float)ox, 0, (float)bw, (float)bh}; SDL_RenderTexture(r, body, NULL, &d); }
+    // 1) unlit chassis. Read the RGB once and keep it: the nub-tracking pass (2.5) samples the
+    //    chassis colour from it to vacate a stick's home well without a "hole".
+    int bw = 0, bh = 0;
+    unsigned char *body_rgb = read_ppm(sc->body, &bw, &bh);
+    SDL_Texture *body = NULL;
+    if (body_rgb) {
+        SDL_Surface *bs = SDL_CreateSurfaceFrom(bw, bh, SDL_PIXELFORMAT_RGB24, body_rgb, bw * 3);
+        if (bs) { body = SDL_CreateTextureFromSurface(r, bs); SDL_DestroySurface(bs); }
+        if (body) {
+            SDL_SetTextureScaleMode(body, SDL_SCALEMODE_NEAREST);
+            SDL_FRect d = {(float)ox, 0, (float)bw, (float)bh};
+            SDL_RenderTexture(r, body, NULL, &d);
+        }
+    }
 
     // 2) lit overlays (copy each lit control's rect from body_lit over the body). A lit d-pad
     //    with a direction lights ONLY the pressed arm sub-rect(s) — same plus geometry as the
@@ -227,6 +240,36 @@ static void render_scene(SDL_Renderer *r, Scene *sc, int show_outline) {
             SDL_FRect s = {(float)p->x, (float)p->y, (float)p->w, (float)p->h};
             SDL_FRect d = {(float)(ox + p->x), (float)p->y, (float)p->w, (float)p->h};
             SDL_RenderTexture(r, litb, &s, &d);
+        }
+    }
+
+    // 2.5) stick NUB visual tracking (tsp-65jc.26): draw the nub sprite shifted by (ox, oy) so it
+    //      FOLLOWS a live drag and recenters at (0, 0). Vacate the home well with the chassis
+    //      colour (a rect corner in body.png is guaranteed chassis — the nub is an inscribed
+    //      circle), then blit the (lit-when-deflected) nub sprite at the offset. Guarded by
+    //      (ox||oy) so a zero-offset scene renders IDENTICALLY to before (the offscreen --shot
+    //      path never sets an offset -> parity frames + baseline gallery are byte-unchanged). The
+    //      whole-control shift IS the sanctioned "draw the existing atlas part at an offset" — no
+    //      re-render, no new art.
+    for (int i = 0; i < sc->nparts; i++) {
+        Part *p = &sc->parts[i];
+        if (!(p->ox || p->oy) || strcmp(p->kind, "stick")) continue;
+        int cr = 18, cg = 18, cb = 22;              // fallback = window clear colour
+        if (body_rgb) {
+            int sx = p->x + 1 < bw ? p->x + 1 : bw - 1;
+            int sy = p->y + 1 < bh ? p->y + 1 : bh - 1;
+            if (sx >= 0 && sy >= 0) {
+                size_t o = ((size_t)sy * bw + sx) * 3;
+                cr = body_rgb[o]; cg = body_rgb[o + 1]; cb = body_rgb[o + 2];
+            }
+        }
+        fill(r, ox + p->x, p->y, p->w, p->h, cr, cg, cb);       // erase the home well
+        SDL_Texture *src = (p->lit && litb) ? litb : body;      // lit nub while deflected
+        if (src) {
+            SDL_FRect s = {(float)p->x, (float)p->y, (float)p->w, (float)p->h};
+            SDL_FRect d = {(float)(ox + p->x + p->ox), (float)(p->y + p->oy),
+                           (float)p->w, (float)p->h};
+            SDL_RenderTexture(r, src, &s, &d);
         }
     }
 
@@ -277,6 +320,12 @@ static void render_scene(SDL_Renderer *r, Scene *sc, int show_outline) {
         }
         if (sc->title[0]) draw_text(r, 18, sc->skin_h - 30, 2, sc->title, 130, 200, 150);
     }
+
+    // release this frame's textures + the kept body RGB (render_scene runs per reload — a live
+    // drag reloads on every motion, so leaking these would grow unboundedly during a drag).
+    if (body) SDL_DestroyTexture(body);
+    if (litb) SDL_DestroyTexture(litb);
+    free(body_rgb);
 }
 
 // read pixels of a software-renderer-on-surface target back to RGB (XRGB8888 surface -> RGB24)
@@ -345,33 +394,51 @@ int main(int argc, char **argv) {
     fprintf(stderr, "skin-render: window up (%dx%d); click=stdout, 'reload'/'quit' on stdin\n", W, H);
 
     // stdin is read non-blocking-ish via the event loop's timeout; mouse events go to stdout.
-    int running = 1;
+    // mid_active latches a stick-CLICK gesture (tsp-65jc.26): the MIDDLE button, or Ctrl+LEFT (for
+    // trackpads with no middle button), is the discoverable L3/R3 affordance. It emits `mid-down`/
+    // `mid-up` (a discrete click, NOT a drag) so the driver resolves it via skin.stick_click — the
+    // base unit (no stick-click row) simply emits nothing. While latched, motion is suppressed (a
+    // click must never leak a set_stick), and whichever button-up arrives ends it.
+    int running = 1, mid_active = 0;
     while (running) {
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
             if (e.type == SDL_EVENT_QUIT) running = 0;
-            else if (e.type == SDL_EVENT_MOUSE_BUTTON_DOWN
-                     && e.button.button == SDL_BUTTON_LEFT) {
+            else if (e.type == SDL_EVENT_MOUSE_BUTTON_DOWN) {
                 int ox = bezel_ox(&sc);
                 int mx = (int)e.button.x, my = (int)e.button.y;
-                if (ox && mx < PANEL_W) {                  // a picker click (on DOWN only)
-                    int idx = (my - 98) / 70;
-                    if (idx >= 0 && idx < sc.npicks)
-                        printf("pick %s\n", sc.picks[idx].code), fflush(stdout);
-                } else {                                   // a bezel press -> skin space
-                    printf("down %d %d\n", mx - ox, my); fflush(stdout);
+                int on_panel = (ox && mx < PANEL_W);
+                int ctrl = (SDL_GetModState() & SDL_KMOD_CTRL) != 0;
+                if (!on_panel && (e.button.button == SDL_BUTTON_MIDDLE
+                                  || (e.button.button == SDL_BUTTON_LEFT && ctrl))) {
+                    mid_active = 1;                        // stick-click gesture begins
+                    printf("mid-down %d %d\n", mx - ox, my); fflush(stdout);
+                } else if (e.button.button == SDL_BUTTON_LEFT) {
+                    if (on_panel) {                        // a picker click (on DOWN only)
+                        int idx = (my - 98) / 70;
+                        if (idx >= 0 && idx < sc.npicks)
+                            printf("pick %s\n", sc.picks[idx].code), fflush(stdout);
+                    } else {                               // a bezel press -> skin space
+                        printf("down %d %d\n", mx - ox, my); fflush(stdout);
+                    }
                 }
             }
-            else if (e.type == SDL_EVENT_MOUSE_BUTTON_UP
-                     && e.button.button == SDL_BUTTON_LEFT) {
-                // release ends the gesture; the driver releases on up (HOLD semantics). Picker
-                // panel clicks have no release, so skip a release that lands inside the panel.
+            else if (e.type == SDL_EVENT_MOUSE_BUTTON_UP) {
                 int ox = bezel_ox(&sc);
                 int mx = (int)e.button.x, my = (int)e.button.y;
-                if (!(ox && mx < PANEL_W)) { printf("up %d %d\n", mx - ox, my); fflush(stdout); }
+                int on_panel = (ox && mx < PANEL_W);
+                if (mid_active && (e.button.button == SDL_BUTTON_MIDDLE
+                                   || e.button.button == SDL_BUTTON_LEFT)) {
+                    mid_active = 0;                        // end the stick-click
+                    printf("mid-up %d %d\n", mx - ox, my); fflush(stdout);
+                } else if (e.button.button == SDL_BUTTON_LEFT && !on_panel) {
+                    // release ends the gesture; the driver releases on up (HOLD semantics). Picker
+                    // panel clicks have no release, so skip a release that lands inside the panel.
+                    printf("up %d %d\n", mx - ox, my); fflush(stdout);
+                }
             }
             else if (e.type == SDL_EVENT_MOUSE_MOTION
-                     && (e.motion.state & SDL_BUTTON_LMASK)) {
+                     && (e.motion.state & SDL_BUTTON_LMASK) && !mid_active) {
                 // a DRAG: left button held + pointer moved. Only the bezel region maps to skin
                 // space; ignore motion over the picker panel (no analog gesture there).
                 int ox = bezel_ox(&sc);

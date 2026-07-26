@@ -101,6 +101,58 @@ def _render_shot(skin, dev, body_ppm, lit_ppm, fb_ppm, lit_parts, out_ppm,
     return out_ppm
 
 
+def geometry_unit_tests(platform_dir):
+    """Device-free (no qemu) unit coverage for the tsp-65jc.26 GUI pieces — runs in the headless
+    gate before any device boots:
+
+      * stick-CLICK resolver (L3/R3) is DATA-DRIVEN: a523 stick parts carry a stick-click row so
+        ``skin.stick_click(centre)`` == press/release of l3/r3; a133 sticks carry no such row, so
+        it resolves to ``[]`` (the base unit emits NO stick-click, purely from the descriptor).
+      * nub-offset MATH: recenters at the rect centre, tracks a full deflection to the travel
+        radius, and clamps a diagonal to the circular well (never leaves the nub's travel disc).
+      * the scene protocol carries the per-part ``<ox> <oy>`` the renderer reads.
+    """
+    import math
+    c = Checker("geometry")
+
+    # a523: clickable sticks -> l3/r3 ; a133: non-clickable -> []
+    s523 = SM.Skin("a523", platform_dir)
+    for sp, iid in (("stick_l", "l3"), ("stick_r", "r3")):
+        cx, cy = _center(s523.parts[sp].rect)
+        got = s523.stick_click(cx, cy)
+        c.chk(got == [SM.Action("press", iid), SM.Action("release", iid)],
+              f"a523 {sp} stick_click -> {[a.as_tuple() for a in got]} == press/release({iid})")
+    s133 = SM.Skin("a133", platform_dir)
+    for sp in ("stick_l", "stick_r"):
+        cx, cy = _center(s133.parts[sp].rect)
+        c.chk(s133.stick_click(cx, cy) == [],
+              f"a133 {sp} stick_click -> [] (no stick-click row: base unit emits no L3/R3)")
+
+    # nub-offset math (on the a523 left stick rect)
+    part = s523.parts["stick_l"]
+    rx, ry, rw, rh = part.rect
+    travel = SM.Skin.nub_travel(part)
+    c.chk(travel > 0, f"nub_travel({rw}x{rh}) = {travel}px (>0)")
+    cx, cy = rx + rw / 2.0, ry + rh / 2.0
+    c.chk(s523.nub_offset(part, cx, cy) == (0, 0), "nub_offset(centre) == (0,0) [recenter]")
+    ox, oy = s523.nub_offset(part, rx + rw, cy)           # full RIGHT
+    c.chk((ox, oy) == (travel, 0), f"nub_offset(full-right) == ({travel},0) [got ({ox},{oy})]")
+    ox, oy = s523.nub_offset(part, cx, ry)                # full UP (screen y-down: negative)
+    c.chk((ox, oy) == (0, -travel), f"nub_offset(full-up) == (0,{-travel}) [got ({ox},{oy})]")
+    ox, oy = s523.nub_offset(part, rx + rw, ry + rh)      # full diagonal -> clamped to the well
+    mag = math.hypot(ox, oy)
+    c.chk(abs(mag - travel) <= 2 and ox > 0 and oy > 0,
+          f"nub_offset(diagonal) clamped to |({ox},{oy})|={mag:.1f} ~ travel {travel}")
+
+    # the scene protocol carries the offset the renderer reads
+    scene = s523.emit_scene("b.ppm", "l.ppm", "-", set(), nub_offsets={"stick_l": (5, -3)})
+    line = next((ln for ln in scene.splitlines() if ln.startswith("part stick_l ")), "")
+    c.chk(line.split()[-2:] == ["5", "-3"], f"emit_scene stick_l line ends with offset: '{line}'")
+
+    print(f"geometry unit tests: {'PASS' if not c.fails else 'FAIL'} ({len(c.fails)} fail)")
+    return c.fails
+
+
 def run_device(device_id, platform_dir, launcher, outdir, apps, do_render):
     c = Checker(f"{device_id}/{launcher}")
     skin = SM.Skin(device_id, platform_dir)
@@ -301,6 +353,10 @@ def main():
     base = os.path.join(HERE, "baseline")
 
     overall = 0
+    # device-free geometry/affordance unit tests (tsp-65jc.26) — run once, before booting anything.
+    print("\n############## geometry unit tests (device-free) ##############")
+    if geometry_unit_tests(platform_dir):
+        overall = 1
     for dev_id in devices:
         print(f"\n############## {dev_id} ##############")
         res = {}
