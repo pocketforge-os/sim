@@ -1,5 +1,15 @@
 # tsp-an4.6 — clickable skin renderer + picker — RESULTS
 
+> **⟳ RE-BASELINED 2026-07-26 (tsp-65jc.1 / infra-113 A1).** Platform pin refreshed
+> `0e9512c → 4ae14c56` (main @ PR #67). The a133 `avd_*.png` gallery was regenerated against the
+> **.scad-rendered skin** (platform PR #66, wave 3): `skins/a133/{body,body_lit}.png` are now
+> rendered from `device-models/trimui-smart-pro/*.scad` via `render.py`, and `[skin.parts]` equals
+> `skins/a133/model-render.json` byte-for-byte (proven by `skin/assert-atlas.py`, output in the
+> tsp-65jc.1 PR/bead — all 14 a133 parts match; a523 has no model render and is correctly skipped).
+> New `avd_ltrig_press.png` (L2 is now a binary-endpoint analog trigger, wave 1). check-skin GREEN,
+> native==qemu byte-identical; `body_lit` stays a pairwise-disjoint one-control-lit atlas (the
+> compositor light/isolation asserts hold). The prose below is the original E5 (FCC-traced-art) record.
+
 Measured on **modelmaker** (x86, GPU-less) with `run-skin.sh`: the IDENTICAL arm64 app
 (`hwprobe-lite`) under **qemu-tsp + bubblewrap** (NO crun) + the native x86 build for parity, the
 `.5` control surface, and the `.6` SDL3 renderer built against `sim-build/sdl3-render`.

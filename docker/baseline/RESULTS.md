@@ -1,5 +1,13 @@
 # `pocketforge-sim` — build + nested-run evidence (tsp-qc1.1 / tsp-qc1.2)
 
+> **⟳ REPINNED 2026-07-26 (tsp-65jc.1 / infra-113 A1).** `docker/platform.pin` +
+> `Dockerfile ARG PLATFORM_COMMIT` refreshed `0e9512c → 4ae14c56` (platform main @ PR #67 — 143
+> commits forward). The image rebuilds reproducible-from-clean at the new pin (a133 descriptor
+> sha256 `1f9ad861…`, a523 `e8ea4b8b…`); the full nested suite (check-control / check-sensor /
+> check-skin, a133 + a523) is GREEN native==qemu byte-identical against the three post-June
+> descriptor waves. See the tsp-65jc.1 PR/bead for the per-artifact wave adjudication. The build /
+> nested-caps evidence below is unchanged (same Dockerfile mechanics, same run caps).
+
 Reproducible containerized BUILD of the E5 sim toolchain + the proof it RUNS nested. Built and run on
 **modelmaker** (mm@10.0.40.90, Docker 29.1.3 + buildx 0.30.1), 2026-06-27.
 

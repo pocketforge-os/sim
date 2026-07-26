@@ -1,5 +1,5 @@
-opened evdev node /dev/input/event2
-opened evdev node /dev/input/event12
+opened evdev node /dev/input/event16
+opened evdev node /dev/input/event17
 layout: canvas 1280x720, 15 controls, 2 nodes
 tsp-osr-pin: OK window(no-GL)+SDL_CreateRenderer("software") -> 'software'
 virtual fb: memfd 1280x720 (3686400 bytes)

@@ -1,5 +1,12 @@
 # tsp-an4.7 — sensor/pose + broker-backed capability injection — RESULTS
 
+> **⟳ RE-BASELINED 2026-07-26 (tsp-65jc.1 / infra-113 A1).** Platform pin refreshed
+> `0e9512c → 4ae14c56` (main @ PR #67). `sensor-evidence.json` was regenerated: the a523 `imu`
+> rows are now EMPTY because SPIKE-0 (`8ee34c4`, wave 1) OMITTED the a523 imu descriptor row
+> (qmi8658 DT-present-but-driver-UNBOUND on stock silicon → R3 row-omission). a523 therefore now
+> reads imu-absent (typed no-op), same shape as a133 — suite GREEN. Delta adjudicated to wave 1
+> in the tsp-65jc.1 PR/bead. The prose below is the original E5 record (a523 imu-present era).
+
 Measured on **modelmaker** (x86 Threadripper) via `sensor/run-sensor.sh`
 (`QEMU_TSP=/home/mm/qemu-tsp/... SDLR=/home/mm/sim-build/sdl3-render
 ROOTFS=/home/mm/sim-build/harness/rootfs-arm64 PLATFORM=/home/mm/platform`).

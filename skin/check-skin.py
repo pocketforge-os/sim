@@ -175,13 +175,20 @@ def run_device(device_id, platform_dir, launcher, outdir, apps, do_render):
                 light_check(sp, False, f"{iid} hat centre")
 
             elif kind == "stick":
-                gui = skin.drag(cx, cy, rx + rw, ry + rh // 2)       # full RIGHT deflection
+                # Drag endpoints use the rect's TRUE (float) centre line, not `rh // 2`: the
+                # model-rendered atlas (platform PR #66) gives odd-dimension stick rects (e.g.
+                # 147x143), and floor-division desyncs from skin_model.frac()'s true division, so
+                # a "full-right, vertically-centred" drag resolved to set_stick(1.0, -0.007) instead
+                # of (1.0, 0.0). Targeting ry + rh/2.0 makes fy == 0.5 exactly -> ny == 0.0. (The
+                # even-dimension pre-reconcile rects masked this; the resolver itself is correct —
+                # a real GUI click a pixel off centre is a sub-deadzone artefact, not a logic error.)
+                gui = skin.drag(cx, cy, rx + rw, ry + rh / 2.0)      # full RIGHT deflection
                 exp = [SM.Action("set_stick", iid, 1.0, 0.0)]
                 c.chk(gui == exp, f"DRAG {sp}->edge -> {[a.as_tuple() for a in gui]} == inject set_stick({iid},1,0)")
                 gui[0].apply(dev); dev.snapshot(f"{iid}_deflect")
                 light_check(sp, True, f"{iid} stick deflect")
                 compositor_check(sp, f"{iid}_deflect", f"{iid} stick")
-                back = skin.drag(cx, cy, cx, cy)                     # to centre
+                back = skin.drag(cx, cy, rx + rw / 2.0, ry + rh / 2.0)   # to centre
                 c.chk(back == [SM.Action("set_stick", iid, 0.0, 0.0)],
                       f"DRAG {sp}->centre == inject set_stick({iid},0,0)")
                 back[0].apply(dev); dev.snapshot(f"{iid}_centre")
@@ -249,8 +256,11 @@ def run_device(device_id, platform_dir, launcher, outdir, apps, do_render):
                 ("dpad_left",  lambda: dev.move_hat("dpad", -1, 0),       {"dpad"},      "D-pad LEFT", (-1, 0)),
                 ("dpad_right", lambda: dev.move_hat("dpad", 1, 0),        {"dpad"},      "D-pad RIGHT", (1, 0)),
                 ("lstick_diag", lambda: dev.set_stick("lstick", 0.7, -0.7), {"stick_l"}, "L-stick up-right", (0, 0)),
-                ("south_press", lambda: dev.press("south"),              {"btn_south"}, "A pressed", (0, 0)),
-                ("ltrig_press", lambda: dev.press("ltrig"),              {"trig_l"},    "L2 pressed (digital)", (0, 0)),
+                ("south_press", lambda: dev.press("south"),              {"btn_south"}, "south (B) pressed", (0, 0)),
+                # L2/R2 are now a BINARY actuator on the analog trigger axis (ABS_Z/RZ,
+                # semantics=binary; SPIKE-0 tsp-9sx.1 + input.semantics tsp-v19s), NOT a digital
+                # BTN_TL2 — dev.press("ltrig") raises "not a button". Drive the endpoint (full-swing).
+                ("ltrig_press", lambda: dev.set_axis("ltrig", 1.0),      {"trig_l"},    "L2 pressed (binary endpoint)", (0, 0)),
             ]
             if dev.has_input("l3"):   # a523 only: the stick PRESSED (L3) — a133 omits the row
                 gallery.append(("l3_press", lambda: dev.press("l3"), {"stick_l"},

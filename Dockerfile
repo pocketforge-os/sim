@@ -23,9 +23,10 @@ ARG ROOTFS_PLATFORM=linux/arm64
 ARG QEMU_TSP_REPO=https://github.com/pocketforge-os/qemu-tsp.git
 ARG QEMU_TSP_COMMIT=329c754ad34e4b8062f2a941ab35383811df70bf
 # platform is PUBLIC (tsp-qc1.4) -> cloned directly at the pinned commit below (origin/main;
-# descriptors match the E5 baselines byte-for-byte). Pin of record: docker/platform.pin.
+# refreshed to current main @ PR #67 in tsp-65jc.1 — baselines re-generated against the three
+# post-June descriptor waves). Pin of record: docker/platform.pin.
 ARG PLATFORM_REPO=https://github.com/pocketforge-os/platform.git
-ARG PLATFORM_COMMIT=0e9512c8158fb55eb5545b5b52fe6e8b4490d359
+ARG PLATFORM_COMMIT=4ae14c56da2624ca75ec5ae5b328b37e047d264a
 
 # ───────────────────────────── toolchain base (x86) ─────────────────────────────
 FROM debian:bookworm@${DEBIAN_DIGEST} AS toolchain
