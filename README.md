@@ -11,6 +11,21 @@ against a **Virtual Device Backend** synthesized purely from the
 > semantics, graceful degradation). GPU blobs, WiFi, timing, enforcement, and per-SoC
 > graphics stay the **flash → serial → webcam hardware gate's sole authority**.
 
+## Quickstart — the `./sim` CLI
+
+One command, zero env vars, zero host toolchain — it wraps the pinned container ([`docs/CLI.md`](docs/CLI.md)):
+
+```bash
+./sim doctor         # is my host ready? (docker, /dev/uinput, display — each ✗ names its fix)
+./sim run a133       # boot one virtual device, run its headless logical suite
+./sim gui a133       # the clickable .scad-rendered skin — press the bezel, watch it light
+./sim check          # the full CI matrix (a133 + a523), exactly as sim-gate.yml runs it
+./sim --help         # the whole product on one screen
+```
+
+Requirements: **docker** (in your group, or `sudo`) and the host **`uinput`** module (`sudo modprobe uinput`).
+The nested sim runs as root *inside* the container, so no host root is needed for the app.
+
 ## How it runs the app (owner decisions, 2026-06-26)
 
 - The identical arm64 binary runs under **[`qemu-tsp`](https://github.com/pocketforge-os/qemu-tsp)**
