@@ -1,12 +1,13 @@
-# Published versioned sim image (ghcr) — design (infra-113 C2 / D7)
+# Published versioned sim image (ghcr + IPFS mirror) — design (infra-113 C2 / D7)
 
-> **Status: DESIGN + a merged-but-DISABLED publish workflow. Publishing is NOT enabled.**
-> The publish itself is **owner-gated** (it is an outward-facing artifact under the org
-> namespace). This document is the design; [`../.github/workflows/publish-image.yml`](../.github/workflows/publish-image.yml)
-> is the ready-to-enable workflow, disabled by default. Neither creates a package, pushes an
-> image, nor records an owner decision. The [owner-decision checklist](#8-owner-decision-points-the-gate)
-> at the end is the crisp ask the coordinator batches to the owner; nothing here is enabled
-> until those are answered. Tracking bead: **tsp-65jc.9**.
+> **Status: LIVE.** Publishing is **ENABLED** (owner decision 2026-07-26, ticket
+> 01KYEE9R013A6KF9JAG5ECHMF8, bead **tsp-65jc.9**): every `main` merge + `v*` tag publishes
+> `ghcr.io/pocketforge-os/sim`, gated by the `SIM_PUBLISH_ENABLED` repo-variable kill switch
+> (see [`../.github/workflows/publish-image.yml`](../.github/workflows/publish-image.yml)). Each
+> publish is **also mirrored to our sovereign IPFS pinset** — see [§9](#9-dual-channel-distribution--the-ipfs-sovereign-mirror)
+> (bead **tsp-65jc.25**). §§1–8 below are the original design + the owner-decision record that gated
+> enablement (kept as history); §§9–10 document the live dual-channel distribution and the optional
+> CI-side-pin upgrade.
 
 ## 1. Why publish the image
 
@@ -181,3 +182,106 @@ batch:
 - **Gate-consumes-published-image rewire** ([§5](#5-ci-and-developer-consumption-for-speed)) — file
   post-enablement; conditional pull keyed on the build-input set.
 - **Publish the `demo` target** as a `-demo`-suffixed tag if `sim gui` demand appears.
+
+## 9. Dual-channel distribution — the IPFS sovereign mirror
+
+> **Status: LIVE (bead tsp-65jc.25, coordinator-ruled Option B, 2026-07-26).** Every ghcr
+> publish is mirrored to our own IPFS pinset. Owner context (ticket 01KYEE9R013A6KF9JAG5ECHMF8):
+> the owner explicitly wants PocketForge's IPFS + pinning infra used for distribution.
+
+The image is distributed over **two channels that carry byte-identical content**, joined by the
+image **digest**:
+
+| Channel | Role | Consumer path |
+|---|---|---|
+| **ghcr.io** (`ghcr.io/pocketforge-os/sim`) | **PRIMARY, operational** — native `docker pull`, lowest barrier for CI + external devs | `docker pull ghcr.io/pocketforge-os/sim@sha256:<digest>` |
+| **IPFS** (`ipfs.pocketforge.org`) | **Sovereign mirror** — content-addressed, our own infra, no third-party registry dependency | fetch the OCI archive by CID, `skopeo copy`/`docker load` it (below) |
+
+**The digest is the join key.** The CID names an **OCI archive** whose top-level manifest is the
+**exact** published image manifest — so `skopeo inspect --raw` of the fetched archive hashes back to
+the very `ghcr.io/pocketforge-os/sim@sha256:<digest>` you would pull from ghcr. The two channels are
+provably the same artifact; the digest ties them together.
+
+### 9.1 How the mirror is produced (the split)
+
+Producing the mirror is deliberately **split into a credential-free CI half and a laptop/ops-side
+pin** — because IPFS-publish credentials stay laptop-side by design (custody posture, `.claude/rules/`
++ tsp-77b: the pinning credential is **not** placed in cloud CI). Nothing in this mirror mints a new
+secret or gives CI a pinning credential.
+
+- **CI half** (`.github/workflows/publish-image.yml`, all plain `run:` steps + one github-owned
+  action — no third-party marketplace action, org allowed-actions=`selected`): after the ghcr push,
+  the workflow (1) exports the published image **by digest** as an OCI archive via `skopeo copy
+  docker://…@sha256:<digest> → oci-archive:` (byte-for-byte manifest, so the archive digest == the
+  ghcr digest — verified in-step), (2) computes its **deterministic IPFS CID offline** with a
+  sha-pinned kubo (`ipfs add --only-hash --cid-version=1 --raw-leaves --chunker=size-1048576
+  --hash sha2-256` — the `unixfs-v1-2025`/IPIP-499 profile the whole project pins with, `image/kubo.pin`),
+  (3) records the **CID + ghcr digest as a pair** in the run summary, and (4) uploads the OCI archive
+  as a **run artifact** (`retention-days: 90`). The CI half reaches **no** pinning API.
+- **Ops-side pin** (`pocketforge-automation/scripts/pf-sim-ipfs-mirror.sh`, run from the **laptop**):
+  downloads that exact run artifact and pins **those exact bytes** to the public pinset. Because the
+  CID is a pure function of `(bytes, flags)` and the bytes + flags are identical, the pinned CID is
+  **identical by construction** to the CI-recorded CID (proven: `--only-hash` CID == real `add` CID).
+
+  ```bash
+  # from the laptop (gh authed with actions:read; NOT inside a worktree):
+  pocketforge-automation/scripts/pf-sim-ipfs-mirror.sh pin --run <publish-run-id> \
+      [--expect-cid <cid>] [--expect-digest sha256:<digest>]
+  ```
+
+  The pinner pins on **both** public nodes (AWS `54.209.141.243` + Oracle `40.233.121.245`, over the
+  existing `~/.ssh/oracle_ipfs_ed25519` key). Both must be pinned: the nodes run
+  `Gateway.NoFetch=true` (serve only pinned blocks) behind a Route53 multivalue record, so a
+  single-node pin 404s ~half the time until the other node also holds it, and there is no automated
+  pinset sync today. If any recomputed or per-node CID disagrees with the CI CID, the pinner
+  **fails loud** (`reason=cid_mismatch`) rather than pinning a divergent artifact — that is
+  stop-the-line evidence of a profile/version drift, not something to paper over.
+
+### 9.2 How a consumer uses the IPFS path
+
+```bash
+CID=<cid-from-the-run-summary>          # printed beside the ghcr digest
+DIGEST=sha256:<digest-from-the-run-summary>
+
+# 1) fetch the OCI archive by CID from our sovereign gateway
+curl -fsSL "https://ipfs.pocketforge.org/ipfs/${CID}" -o pocketforge-sim.oci.tar
+
+# 2) confirm it IS the published image: its OCI manifest hashes to the ghcr digest
+test "sha256:$(skopeo inspect --raw oci-archive:pocketforge-sim.oci.tar | sha256sum | cut -d' ' -f1)" = "$DIGEST"
+
+# 3) load it into the local docker daemon (equivalent to `docker load`)
+skopeo copy oci-archive:pocketforge-sim.oci.tar docker-daemon:ghcr.io/pocketforge-os/sim:from-ipfs
+# …then run/tag it exactly as if pulled from ghcr; it is the same image.
+```
+
+The gateway only serves **pinned** content (`NoFetch=true`), so a successful fetch is itself evidence
+the artifact is pinned on our infra. `pf-sim-ipfs-mirror.sh verify --cid <cid> --digest <digest>`
+automates this exact round trip (fetch → CID self-check → manifest-digest equality → `docker load`),
+with `--per-node` to confirm both gateway nodes hold the pin.
+
+## 10. Optional future upgrade — CI-side pinning (Option A, an OWNER decision)
+
+The §9 design is **Option B**: it fulfills the owner-ratified "mirror every publish on our IPFS"
+plan **with no new authority** — it changes no credential custody, mints nothing, and matches how every
+other IPFS publish (vault ops, blob distribution) works today. Its one trade-off is that the pin is a
+laptop/ops-side step per publish rather than fully inside the CI run.
+
+A **fully-automatic, in-CI pin** is possible but is a genuine **owner decision**, because it reverses
+the deliberate custody posture and adds attack surface:
+
+- **What it needs:** a **new GitHub Actions secret** on `pocketforge-os/sim`, bound to a **protected
+  `publish` environment** (deploy-branch-pinned to `main`) — this is the hardening design's own stated
+  forward path (`pocketforge-automation/scripts/harden-dell-kubo-api.sh` header: *"If a release
+  workflow ever needs to publish from CI, the token must come from a GitHub Actions secret bound to a
+  PROTECTED `publish` environment … a strictly larger change, tracked separately"*). The secret is
+  **either** a bearer token for an **authenticated, internet-reachable kubo add endpoint** on the AWS
+  node (which **does not exist today** — the nodes' kubo API is loopback-only, so this ALSO requires
+  standing that endpoint up), **or** an SSH deploy key placed in CI (an ops key into cloud CI — a
+  security call).
+- **Why it is owner-only:** it mints a new secret, sets a durable custody convention, and (for the
+  bearer path) exposes a new authenticated write surface on production infra. None of that is an
+  agent's call.
+
+Recorded here so the trade is durable and not re-litigated (bead tsp-65jc.25 finding comment carries
+the full reachability analysis). Until/unless the owner chooses Option A, the §9 laptop-side pin is
+the mirror.

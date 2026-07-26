@@ -118,14 +118,109 @@ jobs:
           subject-digest: ${{ steps.build.outputs.digest }}
           push-to-registry: true
 
-      - name: Record published digest
+      # ── IPFS SOVEREIGN-MIRROR HALF (tsp-65jc.25, coordinator-ruled Option B) ─────────────────
+      # ghcr stays the PRIMARY operational layer; we ALSO export the exact published image (BY
+      # DIGEST) as an OCI archive and record its deterministic IPFS CID beside the ghcr digest,
+      # then upload the archive as a run artifact. The ACTUAL pin is a laptop/ops-side step
+      # (pocketforge-automation/scripts/pf-sim-ipfs-mirror.sh) using the existing laptop-custodied
+      # trust/dell-kubo-api credential — DELIBERATELY: IPFS-publish credentials stay laptop-side
+      # (tsp-77b custody posture), so this CI half mints NOTHING and reaches no pinning API. It only
+      # produces the canonical bytes + their CID. The companion pins THESE EXACT artifact bytes, so
+      # the CID is identical by construction. See docs/IMAGE-PUBLISHING.md §9 (+ §10 for the
+      # optional future upgrade to a CI-side pin, an owner decision). All plain `run:` steps + one
+      # github-owned action — no third-party marketplace action (org allowed-actions=selected).
+
+      - name: Install pinned kubo (offline CID hashing)
         run: |
-          echo "### Published \`${IMAGE}\`" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "- **digest:** \`${{ steps.build.outputs.digest }}\`" >> "$GITHUB_STEP_SUMMARY"
-          echo "- **tags:**" >> "$GITHUB_STEP_SUMMARY"
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
-          echo "${{ steps.meta.outputs.tags }}" >> "$GITHUB_STEP_SUMMARY"
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "Consumers pin the DIGEST, not a moving tag (docs/IMAGE-PUBLISHING.md §6)." >> "$GITHUB_STEP_SUMMARY"
+          set -euo pipefail
+          # Pinned to match image/kubo.pin (kubo 0.42.0) so the offline CID uses the SAME
+          # unixfs-v1-2025 profile the rest of the project pins with. Verify BOTH the dist tarball
+          # (sha512, upstream-published) AND the extracted binary (sha256) fail-closed.
+          KUBO_VER=0.42.0
+          KUBO_TARBALL_SHA512=054c38a0cf66f7d738e25085ad62cb3a42d03d4bac329b7dd25c1d71cf18e1ce87d55b1d1b705b04c65210dca9109973579e0eb1cd72f6341ecb3311d840d156
+          KUBO_BINARY_SHA256=a2bcd470ee4c5df3cfc7f11d8acb7b10ab6cadbf0fd8cb079c77fd303746ee4d
+          tgz="kubo_v${KUBO_VER}_linux-amd64.tar.gz"
+          curl -fsSL "https://dist.ipfs.tech/kubo/v${KUBO_VER}/${tgz}" -o "$tgz"
+          echo "${KUBO_TARBALL_SHA512}  ${tgz}" | sha512sum -c -
+          tar xzf "$tgz"
+          echo "${KUBO_BINARY_SHA256}  kubo/ipfs" | sha256sum -c -
+          sudo install -m0755 kubo/ipfs /usr/local/bin/ipfs
+          ipfs --version
+
+      - name: Export published image (by digest) as an OCI archive
+        id: oci
+        run: |
+          set -euo pipefail
+          command -v skopeo >/dev/null || { sudo apt-get update && sudo apt-get install -y skopeo; }
+          digest='${{ steps.build.outputs.digest }}'      # sha256:...
+          hex="${digest#sha256:}"
+          archive="pocketforge-sim-${hex}.oci.tar"
+          # Copy the EXACT manifest+config+layers from ghcr BY DIGEST into an OCI archive. skopeo
+          # copies the manifest blob byte-for-byte, so `skopeo inspect --raw` of this archive hashes
+          # back to the ghcr digest (the round-trip equality proof), independent of tar packaging.
+          # NB: no ref suffix on the oci-archive dest — a ghcr ref contains ':' (sha256:) and '@'
+          # which collide with skopeo's `oci-archive:path[:ref]` colon parsing. A single-image
+          # archive needs no ref; `skopeo inspect --raw` / a docker-daemon load resolve the one image.
+          skopeo copy --quiet \
+            --src-creds "${{ github.actor }}:${{ secrets.GITHUB_TOKEN }}" \
+            "docker://${IMAGE}@${digest}" \
+            "oci-archive:${archive}"
+          # Sanity: the archive's own manifest digest must equal the ghcr digest.
+          got="sha256:$(skopeo inspect --raw "oci-archive:${archive}" | sha256sum | cut -d' ' -f1)"
+          [ "$got" = "$digest" ] || { echo "manifest-digest mismatch: archive=$got ghcr=$digest"; exit 1; }
+          echo "archive=${archive}" >> "$GITHUB_OUTPUT"
+          echo "exported ${archive} ($(stat -c%s "$archive") bytes); manifest digest verified == ${digest}"
+
+      - name: Compute deterministic IPFS CID (offline, unixfs-v1-2025)
+        id: cid
+        run: |
+          set -euo pipefail
+          archive='${{ steps.oci.outputs.archive }}'
+          export IPFS_PATH="$(mktemp -d)"
+          ipfs init --profile=lowpower >/dev/null 2>&1
+          # unixfs-v1-2025 (IPIP-499): CIDv1, raw-leaves, sha2-256, 1 MiB chunks. --only-hash means
+          # we compute the CID WITHOUT adding to any store — no network, no pin, no credential.
+          # The flag set MUST match the companion pinner's `ipfs add` EXACTLY (proven byte-identical:
+          # --only-hash CID == real add CID), so the CID here == the CID the pinner produces for the
+          # SAME artifact bytes uploaded below. Do not drift these flags out of lockstep with
+          # pocketforge-automation/scripts/pf-sim-ipfs-mirror.sh.
+          cid="$(ipfs add --only-hash --cid-version=1 --raw-leaves --chunker=size-1048576 \
+                   --hash sha2-256 --quieter "$archive")"
+          rm -rf "$IPFS_PATH"
+          [ -n "$cid" ] || { echo "empty CID"; exit 1; }
+          echo "cid=${cid}" >> "$GITHUB_OUTPUT"
+          echo "deterministic CID (unixfs-v1-2025): ${cid}"
+
+      - name: Upload OCI archive as a run artifact (the ops-side pin source)
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        with:
+          name: ${{ steps.oci.outputs.archive }}
+          path: ${{ steps.oci.outputs.archive }}
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Record published digest + IPFS mirror pair
+        run: |
+          cid='${{ steps.cid.outputs.cid }}'
+          archive='${{ steps.oci.outputs.archive }}'
+          {
+            echo "### Published \`${IMAGE}\`"
+            echo ""
+            echo "**ghcr (primary, operational):**"
+            echo "- **digest:** \`${{ steps.build.outputs.digest }}\`"
+            echo "- **tags:**"
+            echo '```'
+            echo "${{ steps.meta.outputs.tags }}"
+            echo '```'
+            echo ""
+            echo "**IPFS (sovereign mirror):**"
+            echo "- **CID (unixfs-v1-2025):** \`${cid}\`"
+            echo "- **OCI archive:** \`${archive}\` (uploaded as a run artifact; the join key to the ghcr digest above)"
+            echo "- **Pin status:** NOT pinned by CI. Pinned ops-side from the laptop (credentials stay laptop-side, tsp-77b):"
+            echo '  ```'
+            echo "  pocketforge-automation/scripts/pf-sim-ipfs-mirror.sh pin --run ${{ github.run_id }}"
+            echo '  ```'
+            echo "  which pins THESE artifact bytes → the SAME CID above, fetchable at https://ipfs.pocketforge.org/ipfs/${cid}"
+            echo ""
+            echo "The DIGEST is the join key across both channels; consumers pin the DIGEST, not a moving tag (docs/IMAGE-PUBLISHING.md §6/§9)."
+          } >> "$GITHUB_STEP_SUMMARY"
