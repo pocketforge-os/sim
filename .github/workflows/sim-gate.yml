@@ -10,8 +10,11 @@ name: sim-gate
 # scoped to this repo's default branch only (NOT the org-wide pf-pr-review ruleset). See the
 # "GATE SCOPE / POSTURE / FORK-SKIP" block below for the full contract before relying on this gate.
 #
-# Runs on the self-hosted Dell device-lab runner (org runner `trimui-build-lab`, labels
-# self-hosted+docker). It needs /dev/uinput + the scoped cap set from docker/README.md (the
+# Runs on the self-hosted builder VM (org runner `mm-build-vm`, label pf-builder-vm; a KVM guest
+# on modelmaker, OFF the arbitration host per infra-113 Option B — tsp-65jc.24). Same self-hosted
+# docker-root, org-authored-only posture as the retired Dell `trimui-build-lab` target; the
+# confinement invariant below is unchanged.
+# It needs /dev/uinput + the scoped cap set from docker/README.md (the
 # tsp-qc1.2 nesting verdict) — lighter than --privileged, no host AppArmor change. No ghcr push
 # (build-then-run, per the owner decision).
 #
@@ -105,7 +108,7 @@ jobs:
     # Canonical doc: mission-control BUILD_PIPELINE.md "Build-lab confinement
     # invariant".
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: [self-hosted, docker]
+    runs-on: [self-hosted, pf-builder-vm]
     timeout-minutes: 45
     env:
       IMG: pocketforge-sim:ci-${{ github.run_id }}
