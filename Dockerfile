@@ -41,7 +41,7 @@ ARG QEMU_TSP_COMMIT=329c754ad34e4b8062f2a941ab35383811df70bf
 # valid). Pin of record: docker/platform.pin (this ARG is the operative value ./sim build uses;
 # keep the two in sync).
 ARG PLATFORM_REPO=https://github.com/pocketforge-os/platform.git
-ARG PLATFORM_COMMIT=c98ffcb98041b183202456f283f4a90e82f762b1
+ARG PLATFORM_COMMIT=6cc6664639bdcc361923c93387c323d581b181b4
 
 # ───────────────────────────── toolchain base (x86) ─────────────────────────────
 FROM debian:bookworm@${DEBIAN_DIGEST} AS toolchain

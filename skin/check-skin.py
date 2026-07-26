@@ -152,10 +152,13 @@ def geometry_unit_tests(platform_dir):
     # ---- VIEWS (tsp-65jc.27): the rotatable top-edge view, device-free ----
     for dev_id, extra in (("a133", set()), ("a523", {"btn_home"})):
         sk = SM.Skin(dev_id, platform_dir)
-        c.chk(sk.view_names() == ["front", "top"],
-              f"{dev_id} views == ['front','top'] (got {sk.view_names()})")
+        has_top = c.chk(sk.view_names() == ["front", "top"],
+                        f"{dev_id} views == ['front','top'] (got {sk.view_names()})")
         c.chk(sk.active_view == "front" and sk.display_rect is not None,
               f"{dev_id} defaults to front (fb display_rect present)")
+        if not has_top:
+            continue   # top view absent (stale platform pin?) — recorded above; skip its asserts
+                       # rather than raising and aborting the whole suite.
         # rotate forward then back — set/next/prev cycle
         c.chk(sk.next_view().name == "top" and sk.active_view == "top", f"{dev_id} next_view -> top")
         top_parts = {p.name for p in sk.ordered_parts()}
