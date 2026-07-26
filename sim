@@ -210,8 +210,13 @@ cmd_gui() {
     local xauth="${XAUTHORITY:-$HOME/.Xauthority}"
     local xauth_args=(); [ -f "$xauth" ] && xauth_args=(-e XAUTHORITY=/tmp/.pf-xauth -v "$xauth:/tmp/.pf-xauth:ro")
     command -v xhost >/dev/null 2>&1 && xhost +local:root >/dev/null 2>&1 || true
+    # TTY is OPTIONAL for the live window: the GUI draws on X11, not stdin, so `-t` is stricter than
+    # necessary — with no TTY on stdin (piped invocation, CI, `ssh` without -t) `docker run -it` aborts
+    # with the opaque "the input device is not a TTY" and no window ever opens. Allocate -it only when
+    # stdin IS a terminal (interactive behavior unchanged); otherwise drop it so the window still opens.
+    local it_args=(); [ -t 0 ] && it_args=(-it) || info "no TTY on stdin — opening the live window without an interactive terminal (close the window to exit)."
     step "sim gui ${device} — live clickable skin (X11 passthrough). Press the bezel; close the window to exit."
-    docker run --rm -it "${SIM_CAPS[@]}" \
+    docker run --rm "${it_args[@]}" "${SIM_CAPS[@]}" \
       -e DISPLAY="$DISPLAY" "${xauth_args[@]}" -v /tmp/.X11-unix:/tmp/.X11-unix \
       "$DEMO_IMAGE" window "$device"
   else
