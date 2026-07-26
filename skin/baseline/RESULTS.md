@@ -83,7 +83,7 @@ app framebuffer** composited into `display_rect`:
 - `avd_dpad_{up,down,left,right}.png` — the directional d-pad cross
 - `avd_lstick_diag.png` — left stick deflected up-right (the calibration vector)
 - `avd_south_press.png` — A pressed (lit on the bezel **and** in the live app screen)
-- `avd_ltrig_half.png` — left trigger at 50%
+- `avd_ltrig_press.png` — L2 pressed (binary-endpoint analog trigger)
 - `avd_l3_press.png` — **a523 only**: the left stick PRESSED (red calibration border)
 
 These are the frames awaiting the owner's explicit visual OK (the bead's hardware/visual gate).
