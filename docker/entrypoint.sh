@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # pf-sim — the ONE container entrypoint. Runs the E5 headless suite identically on any host from
 # the baked, pinned artifacts (QEMU_TSP / ROOTFS / PLATFORM / APP_X86 / APP_ARM64 / SKIN_RENDER /
-# SDLR / SDLDIR are set in the image ENV — no /home/mm, no host toolchain). We are PID-1 root in
+# SDLR / SDLDIR are set in the image ENV — no host-staging, no host toolchain). We are PID-1 root in
 # the container, so the uinput-create + bwrap path needs no sudo. See docker/README.md for the
 # required `docker run` caps (the .2 nesting verdict).
 #

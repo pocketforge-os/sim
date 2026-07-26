@@ -2,7 +2,7 @@
 
 One reproducible image carrying the whole E5 sim toolchain — **`qemu-tsp` + both SDL3 variants + an
 arm64 bookworm rootfs + the compiled apps + the platform descriptors** — built from PINNED refs, with
-**zero `/home/mm` hand-staging** and **zero host-toolchain assumptions**. See [`../Dockerfile`](../Dockerfile).
+**zero hand-staged host tree** and **zero host-toolchain assumptions**. See [`../Dockerfile`](../Dockerfile).
 
 > **Layering (unchanged from E5):** the app still runs under `qemu-tsp` + `bubblewrap`, **NO crun**.
 > This image is the reproducible *outer* tooling; the bwrap sim runs **nested** inside it. It is a
@@ -90,11 +90,16 @@ note it as a caveat. Rootless/podman is an untested follow-up caveat.
 ## Commands
 
 ```bash
-pf-sim check-control [devices...]   # default: a133 a523 — the CI-gate suite
+pf-sim check-control [devices...]   # the CI-gate suite
 pf-sim check-sensor  [devices...]
 pf-sim check-skin    [devices...]
 pf-sim shell                        # interactive debug
 ```
+
+**The device list is data-driven.** With no `devices...` args, each suite derives its device rows
+**and** per-device posture from `platform/ci-matrix.toml` (via `pf caps matrix`, in-image) — so a
+device added to that matrix runs here with no change to this image or the workflows. Adding a device
+is a data change in `platform`; see [`../docs/ADD-A-DEVICE.md`](../docs/ADD-A-DEVICE.md).
 
 Acceptance bar (carried from E5): **ALL DEVICES PASS**, **native x86 == arm64-under-qemu-tsp
 BYTE-IDENTICAL** — now from a clean image with no hand-staged artifacts, on any host.
@@ -102,15 +107,19 @@ BYTE-IDENTICAL** — now from a clean image with no hand-staged artifacts, on an
 ## CI gate (tsp-qc1.4 — wires E7/infra-106)
 
 [`.github/workflows/sim-gate.yml`](../.github/workflows/sim-gate.yml) builds this image and runs
-`check-control` + `check-sensor` + `check-skin` (a133 a523) nested, on every PR to `main` (the
-`check-skin` suite joined the gate in tsp-65jc.1 / infra-113 A1). It runs on the
-**self-hosted Dell device-lab runner** (org runner `trimui-build-lab`; labels `self-hosted`+`docker`)
-because the nested sim needs `/dev/uinput` + the scoped cap set above. No ghcr push (build-then-run).
+`check-control` + `check-sensor` + `check-skin` nested, on every PR to `main`, over the
+data-driven device matrix above (the `check-skin` suite joined the gate in tsp-65jc.1 / infra-113 A1).
+It runs on the **self-hosted Dell device-lab runner** (org runner `trimui-build-lab`; labels
+`self-hosted`+`docker`) because the nested sim needs `/dev/uinput` + the scoped cap set above. No
+ghcr push (build-then-run; the versioned-image publish is designed but owner-gated — see
+[`../docs/IMAGE-PUBLISHING.md`](../docs/IMAGE-PUBLISHING.md)).
 
-It is **ADVISORY** first — not a required status check, so a red run does not block merge. **To flip
-to BLOCKING** once a133+a523 stay green + stable: add the `headless-suite` job to `main`'s
-branch-protection required checks (Settings → Branches, or
-`gh api -X PUT repos/pocketforge-os/sim/branches/main/protection ...`).
+**Posture: BLOCKING** as of 2026-07-26 (infra-113 Phase B2). The `headless-suite` job is a
+**required** status check on `main` — a red run **blocks merge**. The **a133** row is the blocking
+key; a523 runs **non-blocking** (infra-113 D2 hardware descope). Per-device posture is data in
+`platform/ci-matrix.toml`, not a workflow constant; promoting a row to blocking is a deliberate data
+change (descriptor silicon-reconciled + baselines current + N stable green runs). See
+[`../docs/ADD-A-DEVICE.md`](../docs/ADD-A-DEVICE.md) and the gate-scope header in `sim-gate.yml`.
 
 ## Interactive `--window` demo (tsp-qc1.5 — the dogfood image)
 

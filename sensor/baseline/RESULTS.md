@@ -8,8 +8,8 @@
 > in the tsp-65jc.1 PR/bead. The prose below is the original E5 record (a523 imu-present era).
 
 Measured on **modelmaker** (x86 Threadripper) via `sensor/run-sensor.sh`
-(`QEMU_TSP=/home/mm/qemu-tsp/... SDLR=/home/mm/sim-build/sdl3-render
-ROOTFS=/home/mm/sim-build/harness/rootfs-arm64 PLATFORM=/home/mm/platform`).
+(`QEMU_TSP=$HOME/qemu-tsp/... SDLR=$HOME/sim-build/sdl3-render
+ROOTFS=$HOME/sim-build/harness/rootfs-arm64 PLATFORM=$HOME/platform`).
 The IDENTICAL arm64 `hwprobe-lite` binary runs under **qemu-tsp + bubblewrap (NO crun)** and the
 native x86 build runs for the parity check. Descriptors are read from `platform` (a523 has the
 `qmi8658` imu + pwm-vibrator rumble; a133 has NEITHER — omission, not a stub).
@@ -81,7 +81,7 @@ byte-identical native==qemu-tsp, `set_pose` still round-trips, location denied.
 ## Reproduce
 ```
 ssh mm@10.0.40.90
-cd /home/mm/sim/sensor
-QEMU_TSP=/home/mm/qemu-tsp/build/qemu-tsp/qemu-aarch64 SDLR=/home/mm/sim-build/sdl3-render \
-ROOTFS=/home/mm/sim-build/harness/rootfs-arm64 PLATFORM=/home/mm/platform bash run-sensor.sh
+cd $HOME/sim/sensor
+QEMU_TSP=$HOME/qemu-tsp/build/qemu-tsp/qemu-aarch64 SDLR=$HOME/sim-build/sdl3-render \
+ROOTFS=$HOME/sim-build/harness/rootfs-arm64 PLATFORM=$HOME/platform bash run-sensor.sh
 ```

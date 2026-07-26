@@ -3,8 +3,8 @@
 Run on **modelmaker** (x86_64, `/dev/uinput`), 2026-06-26:
 
 ```
-QEMU_TSP=/home/mm/qemu-tsp/build/qemu-tsp/qemu-aarch64 \
-SDLDIR=/home/mm/sim-build/sdl3 PLATFORM=/home/mm/platform ./synth/run-synth.sh
+QEMU_TSP=$HOME/qemu-tsp/build/qemu-tsp/qemu-aarch64 \
+SDLDIR=$HOME/sim-build/sdl3 PLATFORM=$HOME/platform ./synth/run-synth.sh
 => ALL DEVICES PASS (a133 a523)
 ```
 

@@ -9,7 +9,7 @@
 # NULL and the binary reports it. Font is the committed, generated font8x13.h (no PIL/SDL_ttf).
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-SDLR="${SDLR:?set SDLR=/home/mm/sim-build/sdl3-render}"
+SDLR="${SDLR:?set SDLR=$HOME/sim-build/sdl3-render}"
 OUT="${1:-$HERE/skin-render}"
 gcc -O2 -I"$SDLR/x86/include" -o "$OUT" "$HERE/skin-render.c" \
     "$SDLR/x86/lib/libSDL3.a" -lm -ldl -lpthread -lrt

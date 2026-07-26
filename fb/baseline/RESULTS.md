@@ -3,8 +3,8 @@
 Run on **modelmaker** (x86_64, **GPU-less path**), 2026-06-26:
 
 ```
-QEMU_TSP=/home/mm/qemu-tsp/build/qemu-tsp/qemu-aarch64 SDLR=/home/mm/sim-build/sdl3-render \
-ROOTFS=/home/mm/sim-build/harness/rootfs-arm64 PLATFORM=/home/mm/platform ./fb/run-fb.sh
+QEMU_TSP=$HOME/qemu-tsp/build/qemu-tsp/qemu-aarch64 SDLR=$HOME/sim-build/sdl3-render \
+ROOTFS=$HOME/sim-build/harness/rootfs-arm64 PLATFORM=$HOME/platform ./fb/run-fb.sh
 => ALL DEVICES PASS (a133 a523)
 ```
 

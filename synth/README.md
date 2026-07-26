@@ -48,9 +48,9 @@ below.)
 ## Run (modelmaker, x86, has `/dev/uinput`)
 
 ```bash
-QEMU_TSP=/home/mm/qemu-tsp/build/qemu-tsp/qemu-aarch64 \
-SDLDIR=/home/mm/sim-build/sdl3 \
-PLATFORM=/home/mm/platform \
+QEMU_TSP=$HOME/qemu-tsp/build/qemu-tsp/qemu-aarch64 \
+SDLDIR=$HOME/sim-build/sdl3 \
+PLATFORM=$HOME/platform \
   ./synth/run-synth.sh            # a133 + a523; exit 0 = PASS, artifacts in synth/baseline/<id>/
 ```
 

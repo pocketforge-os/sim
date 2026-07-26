@@ -11,8 +11,8 @@
 Run on **modelmaker** (x86_64, GPU-less), 2026-06-26:
 
 ```
-QEMU_TSP=/home/mm/qemu-tsp/build/qemu-tsp/qemu-aarch64 SDLR=/home/mm/sim-build/sdl3-render \
-ROOTFS=/home/mm/sim-build/harness/rootfs-arm64 PLATFORM=/home/mm/platform ./control/run-control.sh
+QEMU_TSP=$HOME/qemu-tsp/build/qemu-tsp/qemu-aarch64 SDLR=$HOME/sim-build/sdl3-render \
+ROOTFS=$HOME/sim-build/harness/rootfs-arm64 PLATFORM=$HOME/platform ./control/run-control.sh
 => ALL DEVICES PASS (a133 a523)   —   282 assertions ok, 0 fail
 ```
 

@@ -29,7 +29,7 @@ docker build -t pocketforge-sim .          # from a clean clone of pocketforge-o
   - `/opt/pf/rootfs-arm64/` (arm64 bookworm + `usr/local/lib/libSDL3.so.0.4.10` vendored)
   - `/opt/pf/sdl3/{x86,arm64}` + `/opt/pf/sdl3-render/{x86,arm64}` static libs
   - `/opt/pf/platform/` (devices a133/a523/sdm845 + skins + core/caps.py)
-- **No `/home/mm` hand-staging, no host-toolchain assumption** — the whole toolchain (gcc + cross-gcc + cmake + ninja + meson + bubblewrap) lives in the image; the runtime stage is slim (python3 + bubblewrap).
+- **No hand-staged host tree, no host-toolchain assumption** — the whole toolchain (gcc + cross-gcc + cmake + ninja + meson + bubblewrap) lives in the image; the runtime stage is slim (python3 + bubblewrap).
 
 ### Named reproducible-from-clean gaps (not papered over — ties `tsp-cv7.4.13` discipline)
 
@@ -67,7 +67,7 @@ the **logical layer only**; GPU/WiFi/timing/enforcement/per-SoC graphics stay th
 ## Portability — second host (tsp-qc1.3)
 
 The `pf-sim` entrypoint runs the suite **identically on any host** from the baked image-internal ENV (no
-`/home/mm`, no host env-var setup). Proven on a **second host** — the laptop (matt-laptop, Docker 29.1.3):
+no hand-staged host tree, no host env-var setup). Proven on a **second host** — the laptop (matt-laptop, Docker 29.1.3):
 
 - **Run-only** (image transferred `docker save | gzip | docker load` from modelmaker): `check-control` and
   `check-sensor` for `a133 a523` → **ALL DEVICES PASS**, byte-identical native==qemu-tsp (a133 35/35,
@@ -76,9 +76,9 @@ The `pf-sim` entrypoint runs the suite **identically on any host** from the bake
   equivalent working image; the suite passes identically. This is the full *reproducible-from-clean on ANY
   host* claim, not just *runs on the one box where someone hand-staged it*.
 
-The `/home/mm` absolute-path coupling is retired from the run path: the `run-*.sh` host-dev wrappers now
+The host absolute-path coupling is retired from the run path: the `run-*.sh` host-dev wrappers now
 emit portable hints (the vars are baked in the image), and the container path (`pf-sim` → `check-*.py` →
-`run-in-harness.sh`) reads only image-internal ENV. `grep -rn /home/mm` over the run scripts is clean (only
+`run-in-harness.sh`) reads only image-internal ENV. a grep for the old host-home absolutes over the run scripts is clean (only
 documentation comments in the Dockerfile/entrypoint note *what was retired*).
 
 ## Interactive `--window` demo (tsp-qc1.5)

@@ -1,7 +1,7 @@
 name: sim-gate
 
 # E5 simulator headless CI gate (tsp-qc1.4 / wires infra-106 E7). Builds the reproducible
-# `pocketforge-sim` image from PINNED refs (no /home/mm, no host toolchain) and runs the headless
+# `pocketforge-sim` image from PINNED refs (no hand-staged host tree, no host toolchain) and runs the headless
 # suite NESTED in the container on every PR to main.
 #
 # BLOCKING (infra-113 B2, flipped 2026-07-26): `headless-suite` is now a REQUIRED status check on
@@ -17,7 +17,11 @@ name: sim-gate
 #
 # ═══════════════════ GATE SCOPE · HONESTY CONTRACT · POSTURE · FORK-SKIP (infra-113 B1) ═══════════════════
 # WHAT THIS GATE PROVES — the LOGICAL layer ONLY (canonical: sim/docs/HONESTY-CONTRACT.md;
-# restated in every gate's docs per infra-113 §4). check-control / check-sensor / check-skin
+# restated in every gate's docs per infra-113 §4).
+# ADD A DEVICE = ADD DATA — this gate's device rows + posture come from platform/ci-matrix.toml;
+# adding a device is a pure data change (descriptor + .scad skin + posture row), NOT a workflow
+# edit. Cold-start walkthrough: sim/docs/ADD-A-DEVICE.md.
+# check-control / check-sensor / check-skin
 # assert descriptor correctness, input mapping (evdev codes → SDL3 gamepad enumeration),
 # capability/permission semantics, graceful missing-hardware degradation, accessibility-preference
 # propagation, and per-variant button/skin coverage (a133 vs a523 = data, not code) — cheaply,
