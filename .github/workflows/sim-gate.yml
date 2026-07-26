@@ -4,9 +4,10 @@ name: sim-gate
 # `pocketforge-sim` image from PINNED refs (no /home/mm, no host toolchain) and runs the headless
 # suite NESTED in the container on every PR to main.
 #
-# ADVISORY first: this is NOT a required status check, so a red run does not block merge. Flip to
-# BLOCKING by adding the `headless-suite` job to main's branch-protection required checks — the
-# a133 row is the blocking key (a523 rows run non-blocking, infra-113 D2 descope). See the
+# BLOCKING (infra-113 B2, flipped 2026-07-26): `headless-suite` is now a REQUIRED status check on
+# main — a red run BLOCKS merge. The a133 row is the blocking key (a523 rows run non-blocking,
+# infra-113 D2 descope). Required via repo-level ruleset `pf-sim-gate required check` (id 19755679),
+# scoped to this repo's default branch only (NOT the org-wide pf-pr-review ruleset). See the
 # "GATE SCOPE / POSTURE / FORK-SKIP" block below for the full contract before relying on this gate.
 #
 # Runs on the self-hosted Dell device-lab runner (org runner `trimui-build-lab`, labels
@@ -35,17 +36,22 @@ name: sim-gate
 #   5. Per-SoC graphics — divergent display stacks (A133 sunxifb/no-KMS/fb0 vs A523 kmsdrm/Mali/
 #      DRM-KMS) are per-SoC code + build, not descriptor data; the software-render fb proves neither.
 #
-# POSTURE (infra-113 D3/D4) — ADVISORY TODAY: this is NOT yet a required status check, so a red run
-# does not block merge. Treat a red advisory run as a real failure anyway — fix it, do not merge
-# past it (infra-113 §7). Phase B2 FLIPS this to BLOCKING (adds `headless-suite` to main's
-# branch-protection required checks) once the a133 row is current + stable across enough runs; a133
-# is the blocking key, a523 runs non-blocking (D2). A negative control — descriptor-row deletion →
-# red — is demonstrated before the flip (infra-113 B1).
+# POSTURE (infra-113 D3/D4) — BLOCKING as of 2026-07-26 (Phase B2 flip): `headless-suite` IS a
+# required status check on main, so a red run BLOCKS merge. a133 is the blocking key; a523 runs
+# non-blocking (D2 — a523 rows ride as device-free data, not a hardware gate). The flip was gated on
+# currency (D3): A1 refreshed the platform pin to 4ae14c56 + re-baselined (incl. the .scad skin), A2
+# refreshed the coherent sim/platform pin pair, and a negative control — descriptor-row deletion →
+# red — was demonstrated first (infra-113 B1; sim-gate run 30186660832 conclusion=failure). Required
+# via the repo-level ruleset `pf-sim-gate required check` (id 19755679, default-branch only), which
+# carries an OrgAdmin `always` bypass (owner break-glass for a runner outage / flake — mirrors the
+# pf-pr-review check-ruleset; grants no direct-push path, pf-require-pr stays bypass-free). It does
+# NOT touch the org-wide pf-pr-review ruleset (18463042) — the sim check is scoped to this repo only.
 #
 # FORK-SKIP SEMANTICS (infra-113 finding 10 / D4 — stated plainly): the job-level fork guard below
 # makes this job SKIP for any PR whose head repo is not this repository. GitHub treats a SKIPPED
-# required check as SATISFIED — so once B2 makes this a required check, a fork PR's skip counts as a
-# pass and this gate does NOT actually gate fork PRs. That is an accepted, conscious decision: the
+# required check as SATISFIED — so now that B2 has made this a required check (2026-07-26), a fork
+# PR's skip counts as a pass and this gate does NOT actually gate fork PRs. That is an accepted,
+# conscious decision (finding 10 / D4, ACCEPTED at the B2 flip): the
 # build-lab confinement invariant (tsp-20u1) forbids executing fork/public-PR code on this
 # self-hosted docker = host-root runner, so a fork PR cannot run the suite here by design. Fork
 # contributions are validated by an org member re-pushing the change to an in-repo branch (which
