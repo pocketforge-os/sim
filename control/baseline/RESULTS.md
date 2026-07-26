@@ -1,5 +1,13 @@
 # tsp-an4.5 — injection-as-API control surface: RESULTS (PASS, both devices)
 
+> **⟳ RE-BASELINED 2026-07-26 (tsp-65jc.1 / infra-113 A1).** Platform pin refreshed
+> `0e9512c → 4ae14c56` (main @ PR #67). The `baseline/<dev>/*.png` + `layout.txt`/`app.qemu.log`
+> below were regenerated against the three post-June descriptor waves — SPIKE-0 on-silicon
+> reconcile (`8ee34c4`), input.semantics (`4f1b1fe`), and the semantic OpenSCAD a133 skin (PR #66).
+> Suite GREEN, native==qemu byte-identical; every baseline delta adjudicated to a wave (0
+> unexplained) in the tsp-65jc.1 PR/bead. a133 L2/R2 are now analog binary triggers (ABS_Z/RZ);
+> a133 control geometry moved with the new `[skin.parts]`. The prose below is the original E5 record.
+
 Run on **modelmaker** (x86_64, GPU-less), 2026-06-26:
 
 ```

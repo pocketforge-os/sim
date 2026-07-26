@@ -88,6 +88,17 @@ jobs:
             --cap-add SYS_ADMIN --security-opt apparmor=unconfined --security-opt seccomp=unconfined \
             "$IMG" check-sensor a133 a523
 
+      # check-skin joins the gate as of tsp-65jc.1 (infra-113 A1): the doc §5 gate matrix lists
+      # check-skin as an a133 suite, and A1's first-class item is verifying the .scad-rendered skin
+      # end-to-end (GUI-click==headless-inject + compositor geometry, native==qemu byte-identical).
+      # Running it here means the PR's own CI run proves the clickable skin green on the runner.
+      - name: check-skin a133 a523 (ALL DEVICES PASS, native==qemu byte-identical)
+        run: |
+          docker run --rm --network none \
+            --device /dev/uinput --device-cgroup-rule "c 13:* rmw" -v /dev/input:/dev/input \
+            --cap-add SYS_ADMIN --security-opt apparmor=unconfined --security-opt seccomp=unconfined \
+            "$IMG" check-skin a133 a523
+
       - name: Cleanup CI image
         if: always()
         run: docker image rm -f "$IMG" || true

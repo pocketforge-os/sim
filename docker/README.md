@@ -76,7 +76,8 @@ BYTE-IDENTICAL** — now from a clean image with no hand-staged artifacts, on an
 ## CI gate (tsp-qc1.4 — wires E7/infra-106)
 
 [`.github/workflows/sim-gate.yml`](../.github/workflows/sim-gate.yml) builds this image and runs
-`check-control` + `check-sensor` (a133 a523) nested, on every PR to `main`. It runs on the
+`check-control` + `check-sensor` + `check-skin` (a133 a523) nested, on every PR to `main` (the
+`check-skin` suite joined the gate in tsp-65jc.1 / infra-113 A1). It runs on the
 **self-hosted Dell device-lab runner** (org runner `trimui-build-lab`; labels `self-hosted`+`docker`)
 because the nested sim needs `/dev/uinput` + the scoped cap set above. No ghcr push (build-then-run).
 
