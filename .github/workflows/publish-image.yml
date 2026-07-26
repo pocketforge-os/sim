@@ -158,10 +158,14 @@ jobs:
           # Copy the EXACT manifest+config+layers from ghcr BY DIGEST into an OCI archive. skopeo
           # copies the manifest blob byte-for-byte, so `skopeo inspect --raw` of this archive hashes
           # back to the ghcr digest (the round-trip equality proof), independent of tar packaging.
-          # NB: no ref suffix on the oci-archive dest — a ghcr ref contains ':' (sha256:) and '@'
-          # which collide with skopeo's `oci-archive:path[:ref]` colon parsing. A single-image
-          # archive needs no ref; `skopeo inspect --raw` / a docker-daemon load resolve the one image.
-          skopeo copy --quiet \
+          # --preserve-digests is LOAD-BEARING: `docker push` writes a Docker schema-2 manifest, and
+          # skopeo would otherwise CONVERT it to OCI media types on copy — changing the manifest bytes
+          # and thus the digest (reproduced: archive digest != ghcr digest without this flag). With it,
+          # the original manifest is stored byte-for-byte, so `skopeo inspect --raw` hashes back to the
+          # ghcr digest. NB: no ref suffix on the oci-archive dest — a ghcr ref contains ':' (sha256:)
+          # and '@' which collide with skopeo's `oci-archive:path[:ref]` colon parsing; a single-image
+          # archive needs no ref (`skopeo inspect --raw` / a docker-daemon load resolve the one image).
+          skopeo copy --quiet --preserve-digests \
             --src-creds "${{ github.actor }}:${{ secrets.GITHUB_TOKEN }}" \
             "docker://${IMAGE}@${digest}" \
             "oci-archive:${archive}"
