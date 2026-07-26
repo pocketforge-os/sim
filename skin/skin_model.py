@@ -197,8 +197,36 @@ class Part:
         return fx, fy
 
 
+class View:
+    """One rendered VIEW of a device (tsp-65jc.27): its bezel image + the clickable parts
+    visible from that angle. The FRONT view carries the live-fb ``display_rect``; an extra
+    view (e.g. ``top``) shows only the bezel + its controls and has ``display_rect = None``
+    (the screen is a front-face feature — nothing to composite an fb into)."""
+
+    __slots__ = ("name", "body_path", "lit_body_path", "skin_w", "skin_h",
+                 "parts", "order", "display_rect")
+
+    def __init__(self, name, body_path, lit_body_path, skin_w, skin_h,
+                 parts, order, display_rect):
+        self.name = name
+        self.body_path = body_path
+        self.lit_body_path = lit_body_path
+        self.skin_w = skin_w
+        self.skin_h = skin_h
+        self.parts = parts               # {skin_part: Part}
+        self.order = order               # [skin_part, ...] descriptor order = paint order
+        self.display_rect = display_rect  # (x,y,w,h) for front; None for edge views
+
+
 class Skin:
-    """The clickable skin for one device, in SKIN-image space. Built purely from the descriptor."""
+    """The clickable skin for one device, in SKIN-image space. Built purely from the descriptor.
+
+    Multi-VIEW (tsp-65jc.27): ``front`` (from ``[skin]`` + ``[skin.parts]``, carrying the live
+    fb) plus any additional rendered views from ``[skin.views.<name>]`` + ``[skin.views.<name>.
+    parts]`` (e.g. ``top`` — the rotate-to-see-the-top-edge view). Exactly one view is ACTIVE at
+    a time; hit-test / gesture / emit all operate on the active view, so ``set_view`` /
+    ``next_view`` rotate the device. A device with no ``[skin.views]`` behaves exactly as before
+    (front only) — zero behaviour change for the base single-view case."""
 
     def __init__(self, device_id, platform_dir):
         self.device_id = device_id
@@ -208,34 +236,78 @@ class Skin:
         skin = self.desc.get("skin")
         if not skin:
             raise ValueError(f"{device_id}: descriptor has no [skin] (not AVD-pickable)")
-        self.body_path = os.path.join(platform_dir, skin["body"])
-        self.lit_body_path = os.path.join(platform_dir, skin["lit_body"])
-        self.skin_w, self.skin_h = png_dims(self.body_path)
 
+        # Canvas + rotation are device-level (the app fb the front view composites); only the
+        # front view actually carries a display_rect.
         screen = self.desc["screens"][0]
         rc = screen["render_canvas"]
         self.canvas_w, self.canvas_h = int(rc["w"]), int(rc["h"])
         dr = screen["display_rect"]
-        self.display_rect = (int(dr["x"]), int(dr["y"]), int(dr["w"]), int(dr["h"]))
+        front_display = (int(dr["x"]), int(dr["y"]), int(dr["w"]), int(dr["h"]))
         self.rotation = screen.get("rotation", "none")
 
-        # Raw [skin.parts] rects, grouped with the inputs that light them (insertion order =
-        # descriptor order = paint order).
-        raw = skin.get("parts", {})
-        self.parts = {}
-        self._order = []
+        # FRONT view: [skin] body + [skin.parts]; carries the fb display_rect.
+        self.views = {}
+        self._view_order = []
+        self._add_view("front", skin["body"], skin["lit_body"],
+                       skin.get("parts", {}), front_display)
+        # Additional edge views: [skin.views.<name>] body + [skin.views.<name>.parts]; no fb.
+        for name, vskin in skin.get("views", {}).items():
+            self._add_view(name, vskin["body"], vskin["lit_body"],
+                           vskin.get("parts", {}), None)
+
+        self.set_view("front")
+
+    def _add_view(self, name, body_rel, lit_rel, raw_parts, display_rect):
+        """Build a View: cross-reference the descriptor inputs against THIS view's parts, so a
+        control absent from the view's parts table (e.g. the d-pad in the top view) is simply
+        not present in that view. Same Part/input model as before, per view."""
+        body_path = os.path.join(self.platform_dir, body_rel)
+        lit_body_path = os.path.join(self.platform_dir, lit_rel)
+        skin_w, skin_h = png_dims(body_path)
+        parts, order = {}, []
         for inp in self.desc.get("inputs", []):
             sp = inp.get("skin_part")
-            if not sp:
-                continue
-            if sp not in raw:
-                raise ValueError(f"input '{inp['id']}' references skin_part '{sp}' "
-                                 f"absent from [skin.parts]")
-            if sp not in self.parts:
-                r = raw[sp]
-                self.parts[sp] = Part(sp, (int(r["x"]), int(r["y"]), int(r["w"]), int(r["h"])))
-                self._order.append(sp)
-            self.parts[sp].inputs.append(inp)
+            if not sp or sp not in raw_parts:
+                continue                 # control not visible in this view
+            if sp not in parts:
+                r = raw_parts[sp]
+                parts[sp] = Part(sp, (int(r["x"]), int(r["y"]), int(r["w"]), int(r["h"])))
+                order.append(sp)
+            parts[sp].inputs.append(inp)
+        self.views[name] = View(name, body_path, lit_body_path, skin_w, skin_h,
+                                parts, order, display_rect)
+        self._view_order.append(name)
+
+    # -------- view selection (rotate the device) --------
+    def view_names(self):
+        return list(self._view_order)
+
+    def set_view(self, name):
+        """Activate a view: re-point the active-view attributes the renderer/proof read. The
+        canvas + device rotation stay device-level; only the front view has a display_rect."""
+        if name not in self.views:
+            raise ValueError(f"{self.device_id}: no such view '{name}' "
+                             f"(have {self._view_order})")
+        v = self.views[name]
+        self.active_view = name
+        self.body_path = v.body_path
+        self.lit_body_path = v.lit_body_path
+        self.skin_w, self.skin_h = v.skin_w, v.skin_h
+        self.parts = v.parts
+        self._order = v.order
+        self.display_rect = v.display_rect
+        return v
+
+    def _step_view(self, delta):
+        i = (self._view_order.index(self.active_view) + delta) % len(self._view_order)
+        return self.set_view(self._view_order[i])
+
+    def next_view(self):
+        return self._step_view(1)
+
+    def prev_view(self):
+        return self._step_view(-1)
 
     # -------- parts / hit-test --------
     def ordered_parts(self):
@@ -427,10 +499,19 @@ class Skin:
         hat_dirs = hat_dirs or {}
         nub_offsets = nub_offsets or {}
         lines = [f"skin {body_ppm} {lit_body_ppm} {self.skin_w} {self.skin_h}"]
-        x, y, w, h = self.display_rect
-        lines.append(f"display {x} {y} {w} {h} {self.composite_rotation()}")
-        fb = fb_ppm if fb_ppm else "-"
-        lines.append(f"fb {fb} {self.canvas_w} {self.canvas_h}")
+        # view <name> <index> <count> (tsp-65jc.27): tells the renderer which view is showing so
+        # it can draw the rotate affordance + label. Absent tokens default to front-only in C.
+        idx = self._view_order.index(self.active_view)
+        lines.append(f"view {self.active_view} {idx} {len(self._view_order)}")
+        if self.display_rect is not None:
+            x, y, w, h = self.display_rect
+            lines.append(f"display {x} {y} {w} {h} {self.composite_rotation()}")
+            fb = fb_ppm if fb_ppm else "-"
+            lines.append(f"fb {fb} {self.canvas_w} {self.canvas_h}")
+        else:
+            # Edge view: no screen to composite an fb into.
+            lines.append("display 0 0 0 0 none")
+            lines.append(f"fb - {self.canvas_w} {self.canvas_h}")
         for p in self.ordered_parts():
             rx, ry, rw, rh = p.rect
             hx, hy = hat_dirs.get(p.name, (0, 0))
@@ -457,17 +538,22 @@ def _cmd_picker(a):
 
 def _cmd_show(a):
     s = Skin(a.device, a.platform)
+    if getattr(a, "view", None):
+        s.set_view(a.view)
     out = {
         "device": s.device_id,
+        "views": s.view_names(),
+        "active_view": s.active_view,
         "skin": [s.skin_w, s.skin_h],
         "canvas": [s.canvas_w, s.canvas_h],
-        "display_rect": list(s.display_rect),
+        "display_rect": list(s.display_rect) if s.display_rect is not None else None,
         "rotation": s.rotation,
-        "composite_rotation": s.composite_rotation(),
-        "composite_scale": [round(v, 5) for v in s.composite_scale()],
         "parts": [{"name": p.name, "kind": p.kind, "rect": list(p.rect),
                    "inputs": [i["id"] for i in p.inputs]} for p in s.ordered_parts()],
     }
+    if s.display_rect is not None:
+        out["composite_rotation"] = s.composite_rotation()
+        out["composite_scale"] = [round(v, 5) for v in s.composite_scale()]
     print(json.dumps(out, indent=2))
     return 0
 
@@ -479,6 +565,7 @@ def main():
     p = sub.add_parser("picker"); p.add_argument("--platform", required=True)
     p = sub.add_parser("show")
     p.add_argument("--device", required=True); p.add_argument("--platform", required=True)
+    p.add_argument("--view", default=None, help="show a specific view (default: front)")
     a = ap.parse_args()
     return _cmd_picker(a) if a.cmd == "picker" else _cmd_show(a)
 
