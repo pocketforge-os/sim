@@ -5,15 +5,20 @@
 # the container, so the uinput-create + bwrap path needs no sudo. See docker/README.md for the
 # required `docker run` caps (the .2 nesting verdict).
 #
-#   pf-sim check-control [devices...]   # default: a133 a523
+#   pf-sim check-control [devices...]   # bare default per check-control.py; CI passes matrix ids
 #   pf-sim check-sensor  [devices...]
 #   pf-sim check-skin    [devices...]
 #   pf-sim check-broker-stub            # broker_stub presence/policy unit-test (tsp-9sx.6; no qemu)
+#   pf-sim matrix <list|validate ...>   # the data-driven CI gate matrix (infra-113 B4): derive
+#                                       # device rows + posture from the BAKED platform's
+#                                       # ci-matrix.toml — the single source CI consumes so the
+#                                       # device list is never hardcoded (`pf caps matrix`).
 #   pf-sim window <device>              # interactive --window demo (DEMO image; needs a real $DISPLAY)
 #   pf-sim window-selftest [device]     # autonomous: live-window smoke + driver loop (Xvfb; DEMO image)
 #   pf-sim shell                        # interactive debug
 set -euo pipefail
 SIM=/opt/sim
+PLATFORM="${PLATFORM:-/opt/pf/platform}"
 WIN="${SKIN_RENDER_WINDOW:-/opt/pf/apps/skin-render-window}"
 cmd="${1:-check-control}"; shift || true
 
@@ -22,6 +27,11 @@ case "$cmd" in
   check-sensor)  exec python3 "$SIM/sensor/check-sensor.py"  "$@" ;;
   check-skin)    exec python3 "$SIM/skin/check-skin.py"      "$@" ;;
   check-broker-stub) exec python3 "$SIM/control/check-broker-stub.py" "$@" ;;
+  matrix)
+    # The data-driven CI gate matrix, read from the BAKED platform descriptors (infra-113 B4 /
+    # D6). The device list + per-device posture come from platform ci-matrix.toml — CI derives
+    # its rows from HERE instead of a hardcoded device list, so adding a device = adding data.
+    exec python3 "$PLATFORM/core/caps.py" matrix "$@" ;;
   window)
     # the interactive live demo (DEMO image) — needs a real X display forwarded in
     : "${DISPLAY:?'pf-sim window' needs a real X display (-e DISPLAY -v /tmp/.X11-unix:/tmp/.X11-unix); for a headless check use 'window-selftest'}"
@@ -42,6 +52,6 @@ case "$cmd" in
   shell)         exec /bin/bash "$@" ;;
   *)
     echo "pf-sim: unknown command '$cmd'" >&2
-    echo "usage: pf-sim {check-control|check-sensor|check-skin|check-broker-stub|window|window-selftest|shell} [devices...]" >&2
+    echo "usage: pf-sim {check-control|check-sensor|check-skin|check-broker-stub|matrix|window|window-selftest|shell} [devices...]" >&2
     exit 2 ;;
 esac
