@@ -1,5 +1,6 @@
 # ══════════════════════════════════════════════════════════════════════════════════════════════
-# ⚠ DISABLED BY DEFAULT — PUBLISHING IS OWNER-GATED (infra-113 C2 / D7, bead tsp-65jc.9).
+# ENABLED 2026-07-26 (owner decision, ticket 01KYEE9R013A6KF9JAG5ECHMF8). Kill switch: set the
+# repo variable SIM_PUBLISH_ENABLED to anything but 'true' (job guard below) — no revert needed.
 # ══════════════════════════════════════════════════════════════════════════════════════════════
 # This workflow publishes the pinned `pocketforge-sim` image to ghcr.io. It is MERGED but INERT:
 # it CANNOT publish until the owner enables it. Two independent guards keep it off:
@@ -28,17 +29,14 @@
 
 name: publish-image
 
-# DISABLED: manual-dispatch only, and the job is additionally guarded by SIM_PUBLISH_ENABLED.
+# ENABLED (owner decision 2026-07-26, ticket 01KYEE9R013A6KF9JAG5ECHMF8, bead tsp-65jc.9):
+# publishing fires on main merges + semver release tags; workflow_dispatch retained for re-runs.
+# The SIM_PUBLISH_ENABLED repo variable (set true 2026-07-26) remains the job-level kill switch.
 on:
+  push:
+    branches: [main]
+    tags: ['v*']
   workflow_dispatch:
-
-# ── on-enable: uncomment this block (and remove the workflow_dispatch-only `on:` above) to make
-# ── publishing automatic on main merges + semver release tags. Keep workflow_dispatch too.
-# on:
-#   push:
-#     branches: [main]
-#     tags: ['v*']
-#   workflow_dispatch:
 
 # Least-privilege: read the source, write the package, and (for attestation) mint an OIDC token +
 # write attestations. Nothing else. `packages: write` here is the WORKFLOW GITHUB_TOKEN scope — it
