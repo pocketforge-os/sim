@@ -63,43 +63,53 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4 (repo requires SHA-pinned actions)
 
-      - name: Set up Buildx
-        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f  # v3
+      # NOTE (tsp-65jc.9 startup_failure fix, 2026-07-26): the org allowed-actions policy is
+      # `selected` (github-owned + pocketforge-os/* + aws-actions/*), so the docker/* marketplace
+      # actions (login/metadata/buildx/build-push) are REJECTED at workflow startup. Rather than
+      # widening org governance, the same work is done below with plain `docker` run steps —
+      # fewer third-party supply-chain deps, same result. actions/checkout + attest-build-provenance
+      # are github-owned and stay.
 
       - name: Log in to ghcr.io
-        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9  # v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}   # workflow token, packages:write — NOT the App token
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+        # workflow token, packages:write — NOT the App token
 
-      - name: Derive tags + labels
+      - name: Derive tags
         id: meta
-        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051  # v5
-        with:
-          images: ${{ env.IMAGE }}
+        run: |
+          set -euo pipefail
+          short="sha-$(git rev-parse --short=12 HEAD)"
+          tags="$short"
+          ref="${GITHUB_REF}"
+          if [[ "$ref" == refs/heads/* ]]; then
+            tags="$tags ${ref#refs/heads/}"
+          elif [[ "$ref" == refs/tags/v* ]]; then
+            ver="${ref#refs/tags/v}"
+            tags="$tags v${ver} ${ver%.*} latest"
+          fi
+          echo "tags=$tags" >> "$GITHUB_OUTPUT"
+          echo "derived tags: $tags"
           # main -> :main + :sha-<short> (immutable); release tag v* -> :vX.Y.Z + :X.Y + :latest.
           # Moving tags (main/latest) are conveniences; consumers PIN THE DIGEST (design §3/§6).
-          tags: |
-            type=ref,event=branch
-            type=sha,prefix=sha-
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
-          labels: |
-            org.opencontainers.image.source=https://github.com/${{ github.repository }}
-            org.opencontainers.image.revision=${{ github.sha }}
 
       - name: Build + push the lean runtime image
         id: build
-        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8  # v6
-        with:
-          context: .
-          target: runtime            # the lean CI/dev image (NOT demo); design §2
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          provenance: false          # attestation is done explicitly below (attest-build-provenance)
+        run: |
+          set -euo pipefail
+          docker build \
+            --target runtime \
+            --label "org.opencontainers.image.source=https://github.com/${{ github.repository }}" \
+            --label "org.opencontainers.image.revision=${{ github.sha }}" \
+            -t "$IMAGE:tmp-build" .
+          for t in ${{ steps.meta.outputs.tags }}; do
+            docker tag "$IMAGE:tmp-build" "$IMAGE:$t"
+            docker push "$IMAGE:$t"
+          done
+          digest=$(docker inspect --format='{{index .RepoDigests 0}}' "$IMAGE:tmp-build" | cut -d@ -f2)
+          [ -n "$digest" ] || { echo "no digest after push"; exit 1; }
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          echo "published digest: $digest"
+          # target runtime = the lean CI/dev image (NOT demo); design §2
 
       - name: Attest build provenance (SLSA)
         uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be  # v2
