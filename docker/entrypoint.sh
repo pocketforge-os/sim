@@ -43,8 +43,8 @@ case "$cmd" in
   # (tsp-477r). check-synth.py itself needs /dev/uinput + qemu + SDL (run-synth.sh, not this
   # suite), so unlike the two verbs above this one is NOT yet wired into any gate pre-pass —
   # tsp-3x7d-coord ruled that gating the negative control of a checker that never runs is a
-  # guard for a guard that is not there, and is filing one consolidated bead to decide which
-  # checkers belong in the blocking gate and wire each one TOGETHER WITH its negative control.
+  # guard for a guard that is not there. Bead tsp-khld owns that posture decision: which of
+  # sim's checkers belong in the blocking gate, each wired TOGETHER WITH its negative control.
   check-synth-selftest) exec python3 "$SIM/synth/selftest-check-synth.py" "$@" ;;
   matrix)
     # The data-driven CI gate matrix, read from the BAKED platform descriptors (infra-113 B4 /
