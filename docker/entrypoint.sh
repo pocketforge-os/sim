@@ -10,6 +10,7 @@
 #   pf-sim check-skin    [devices...]
 #   pf-sim check-broker-stub            # broker_stub presence/policy unit-test (tsp-9sx.6; no qemu)
 #   pf-sim selftest-region-guard        # skin_part-gate negative control (tsp-3x7d; no qemu)
+#   pf-sim selftest-skin-optional       # optional-descriptor-field negative control (tsp-bu5e; no qemu)
 #   pf-sim matrix <list|validate ...>   # the data-driven CI gate matrix (infra-113 B4): derive
 #                                       # device rows + posture from the BAKED platform's
 #                                       # ci-matrix.toml — the single source CI consumes so the
@@ -32,6 +33,10 @@ case "$cmd" in
   # pre-pass inside check-control, so the gate covers it with no workflow edit — this verb is
   # for running it alone while iterating on the predicate.
   selftest-region-guard) exec python3 "$SIM/control/selftest_region_guard.py" "$@" ;;
+  # The optional-descriptor-field negative control (tsp-bu5e; no qemu, no uinput). ./sim runs it
+  # as a device-free PRE-PASS before the per-device suites, so the gate covers it with no workflow
+  # edit — this verb is for running it alone while iterating on the absent-vs-bogus predicate.
+  selftest-skin-optional) exec env PLATFORM="$PLATFORM" python3 "$SIM/skin/selftest_skin_model_optional.py" "$@" ;;
   matrix)
     # The data-driven CI gate matrix, read from the BAKED platform descriptors (infra-113 B4 /
     # D6). The device list + per-device posture come from platform ci-matrix.toml — CI derives
@@ -57,6 +62,6 @@ case "$cmd" in
   shell)         exec /bin/bash "$@" ;;
   *)
     echo "pf-sim: unknown command '$cmd'" >&2
-    echo "usage: pf-sim {check-control|check-sensor|check-skin|check-broker-stub|selftest-region-guard|matrix|window|window-selftest|shell} [devices...]" >&2
+    echo "usage: pf-sim {check-control|check-sensor|check-skin|check-broker-stub|selftest-region-guard|selftest-skin-optional|matrix|window|window-selftest|shell} [devices...]" >&2
     exit 2 ;;
 esac

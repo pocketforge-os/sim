@@ -109,8 +109,18 @@ run_suite() { # <suite> <devices...>
   step "pf-sim check-${suite} $*  ${DIM}(native x86 == arm64-under-qemu-tsp, byte-identical)${RST}"
   docker run --rm "${_net[@]}" "${SIM_CAPS[@]}" "$IMAGE" "check-${suite}" "$@"
 }
+# Device-free pre-passes: negative controls that assert the descriptor-shape guards can still FAIL.
+# They run INSIDE run_suites_over (not as a separate workflow step) so `./sim check` — which IS the
+# gate — covers them with no sim-gate.yml edit, and so a developer sees the same verdict locally.
+# They take no device args and are cheap (~1s, no qemu/uinput). A guard nothing invokes is a
+# check-shaped absence that still reads as coverage, which is the failure class these exist to kill.
+run_selftests() {
+  step "pf-sim selftest-skin-optional  ${DIM}(device-free: optional descriptor fields, tsp-bu5e)${RST}"
+  docker run --rm "${_net[@]}" "$IMAGE" selftest-skin-optional
+}
 run_suites_over() { # <devices...> — control+sensor+skin over the devices; return rc (no build/validate)
   local suite rc=0
+  run_selftests || rc=$?
   for suite in control sensor skin; do
     run_suite "$suite" "$@" || rc=$?
   done

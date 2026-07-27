@@ -56,6 +56,63 @@ deflection position (how far + which way); a pressed stick (L3/R3) gets a red bo
 only on the a523, since the a133 omits the `l3`/`r3` rows. Each widget keeps a centre hub/arm lit
 when active so the `.5`/`.6` centre-region assertions still hold byte-identical native==qemu.
 
+## Optional descriptor fields — absent vs BOGUS (tsp-bu5e)
+
+Three fields `skin_model.py` consumes are **OPTIONAL** in platform's
+`schemas/capabilities.schema.json` — `screens[].display_rect` (`$defs.screen.required` is
+`[role, render_canvas, present, rotation]`), and `lit_body` on both `[skin]` and
+`[skin.views.<v>]` (`$defs.skin.required` / `$defs.skinview.required` are both `[body, parts]`).
+All three used to be indexed directly, so a descriptor **platform's own validator called VALID**
+made `Skin()` raise a bare `KeyError` from inside its constructor. Reproduced against platform
+`8dce733`: deleting any one of them prints `OK a133: capabilities valid` from `core/caps.py`
+while `Skin('a133')` raises.
+
+The ruling follows [`../control/layout.py`](../control/layout.py):99-104 — the in-repo precedent
+that deliberately gives **absent** and **present-but-bogus** different outcomes (absent
+`skin_part` → `continue`; present but unknown → hard `ValueError`):
+
+| field | ABSENT | rationale |
+|-------|--------|-----------|
+| `screens[0].display_rect` | **degrade**: front view gets `display_rect = None` and composites no fb — exactly the state an edge view is already in | `View.display_rect = None` is already a first-class modelled state here, and every consumer already branches on it (`emit_scene` → `display 0 0 0 0 none` + `fb -`; the CLI → `"display_rect": null`). Zero coverage is lost, because `check-skin.py` independently asserts the front view HAS one — so the model degrades and the **checker** judges |
+| `[skin].lit_body` | **degrade**: `lit_body_path` falls back to `body_path`, `has_lit_body = False` | "no lit art" is a legitimate art-set state. The renderer needs *a* lit texture; the honest fallback is the unlit body, so a press simply changes nothing |
+| `[skin.views.<v>].lit_body` | **degrade**, per view, identically | same schema shape, same semantics — stated deliberately rather than by default |
+
+**Absence is a DECLARATION; a present-but-unresolvable value is a CLAIM THAT FAILED.** So a
+`display_rect` that is present but not a well-formed rect, and a `lit_body` that is present but
+names a file that is not there, both raise a designed `ValueError` naming the device, the table
+and the remedy. Degrading those identically would make a typo indistinguishable from an
+intention and turn the only signal that catches descriptor drift into a no-op — the
+plausible-and-wrong fix. Every degradation is also made **visible**: a `skin_model: WARN …` line
+on stderr, plus `has_lit_body` / `display_rect: null` in `skin_model.py show`.
+
+Bounds are not invented here: `_require_rect`'s (`x,y,w,h` required, `w,h >= 1`) are copied from
+the schema's own `$defs.rect`, so that arm can only fire on a descriptor the platform validator
+also rejects. `_resolve_art`'s existence check is the rule already applied to `body` (which
+hard-fails via `png_dims`), extended to its optional sibling.
+
+### The negative control
+
+[`selftest_skin_model_optional.py`](selftest_skin_model_optional.py) — device-free, stdlib only,
+no qemu/uinput. `./sim check` runs it as a **pre-pass** before the per-device suites (so the gate
+covers it with no workflow edit), and `pf-sim selftest-skin-optional` runs it alone.
+
+Ten rows: `C*` the two unmodified shipped descriptors (green, and asserting **no** warning is
+emitted); `A*` each absent field degrading, with the warning text and the scene output asserted,
+plus a row proving the compositor **refuses** rather than computing on a substituted zero rect;
+`B*` four present-but-unresolvable values, each asserted to fail **for its own message**.
+
+Measured, and re-runnable — a guard nobody has seen fail is not a guard:
+
+- against the **pre-fix** `skin_model.py`: **all 10 rows red**;
+- against the **hard adversary** — the same fix with the same public surface but the bogus arm
+  weakened to degrade everything — **exactly the 4 `B*` rows red, every `A*`/`C*` row green**,
+  which is what shows the `B` arm is load-bearing rather than incidentally covered;
+- with the guard broken, `./sim check` itself exits non-zero (`BLOCKING suite failure … merge is
+  blocked`), so the wiring is load-bearing too;
+- unusable input **fails loudly** (exit 2) — a missing `PLATFORM`, a non-platform dir, or a
+  descriptor that no longer carries the shape a row mutates. It never SKIPs: a skip contributes
+  nothing to CI's exit code, which is exactly what CI would see.
+
 ## What this proves — and the HONESTY CONTRACT
 
 **Proves (logical layer):** the picker lists every skinned variant from `[identity]`; a click on
