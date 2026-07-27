@@ -212,11 +212,14 @@ def region_disposition(inp):
         return (REGION_SKIP, None,
                 f"skip '{iid}': class=system and no skin_part — ambient system control with no "
                 f"drawable region, nothing for a region assertion to say")
+    # NB: the noun stays generic ("a control"), NOT "a gamepad control" — `class` may be any
+    # value, and hardcoding the default's noun made the message contradict itself on an unknown
+    # class ("is class=wibble but ... a gamepad control ...").
     return (REGION_FAIL, None,
             f"input '{iid}' is class={cls}"
-            f"{' (default)' if 'class' not in inp else ''} but declares no skin_part — a gamepad "
-            f"control the skin can neither draw nor click is either a descriptor omission or "
-            f"should be class=system")
+            f"{' (default)' if 'class' not in inp else ''} but declares no skin_part — a control "
+            f"the skin can neither draw nor click is either a descriptor omission or should be "
+            f"class=system")
 
 
 def region_rows(inputs, chk):

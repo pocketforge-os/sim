@@ -242,6 +242,12 @@ def run_device(device_id, platform_dir, launcher, outdir, apps, do_render):
         #      `if not sp or sp not in raw_parts: continue`). A skin_part that is bogus GLOBALLY is
         #      NOT swallowed here — compute_layout already raised ValueError inside Device() above,
         #      before this loop can run — so a typo can never hide behind "not in this view".
+        #      ⚠ HONESTY: gate 2 is DEFENSIVE, and is NOT reachable on today's descriptors. This
+        #      loop runs the FRONT view, whose parts table is by construction the global
+        #      [skin.parts] that compute_layout already validated, so the .get() cannot miss here
+        #      — forcing set_view("top") is what makes the pre-fix KeyError fire (coordinator's
+        #      finding, tsp-3x7d). It is kept because it is correct and the view set is data, but
+        #      do not read it as covered: no test exercises this branch today.
         for inp, sp in L.region_rows(inputs, c.chk):
             iid, kind = inp["id"], inp.get("kind")
             part = skin.parts.get(sp)
