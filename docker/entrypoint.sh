@@ -11,6 +11,8 @@
 #   pf-sim check-broker-stub            # broker_stub presence/policy unit-test (tsp-9sx.6; no qemu)
 #   pf-sim selftest-region-guard        # skin_part-gate negative control (tsp-3x7d; no qemu)
 #   pf-sim selftest-skin-optional       # optional-descriptor-field negative control (tsp-bu5e; no qemu)
+#   pf-sim check-synth-selftest         # negative control for check-synth.py section B (tsp-477r;
+#                                       # hermetic — no descriptor, no /dev/uinput, no qemu)
 #   pf-sim matrix <list|validate ...>   # the data-driven CI gate matrix (infra-113 B4): derive
 #                                       # device rows + posture from the BAKED platform's
 #                                       # ci-matrix.toml — the single source CI consumes so the
@@ -37,6 +39,13 @@ case "$cmd" in
   # as a device-free PRE-PASS before the per-device suites, so the gate covers it with no workflow
   # edit — this verb is for running it alone while iterating on the absent-vs-bogus predicate.
   selftest-skin-optional) exec env PLATFORM="$PLATFORM" python3 "$SIM/skin/selftest_skin_model_optional.py" "$@" ;;
+  # The negative control for check-synth.py's descriptor-derived node-topology assertions
+  # (tsp-477r). check-synth.py itself needs /dev/uinput + qemu + SDL (run-synth.sh, not this
+  # suite), so unlike the two verbs above this one is NOT yet wired into any gate pre-pass —
+  # tsp-3x7d-coord ruled that gating the negative control of a checker that never runs is a
+  # guard for a guard that is not there, and is filing one consolidated bead to decide which
+  # checkers belong in the blocking gate and wire each one TOGETHER WITH its negative control.
+  check-synth-selftest) exec python3 "$SIM/synth/selftest-check-synth.py" "$@" ;;
   matrix)
     # The data-driven CI gate matrix, read from the BAKED platform descriptors (infra-113 B4 /
     # D6). The device list + per-device posture come from platform ci-matrix.toml — CI derives
@@ -62,6 +71,6 @@ case "$cmd" in
   shell)         exec /bin/bash "$@" ;;
   *)
     echo "pf-sim: unknown command '$cmd'" >&2
-    echo "usage: pf-sim {check-control|check-sensor|check-skin|check-broker-stub|selftest-region-guard|selftest-skin-optional|matrix|window|window-selftest|shell} [devices...]" >&2
+    echo "usage: pf-sim {check-control|check-sensor|check-skin|check-broker-stub|selftest-region-guard|selftest-skin-optional|check-synth-selftest|matrix|window|window-selftest|shell} [devices...]" >&2
     exit 2 ;;
 esac
