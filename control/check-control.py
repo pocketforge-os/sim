@@ -40,6 +40,8 @@ sys.path.insert(0, os.path.join(HERE, "..", "fb"))
 
 from control_surface import Device, HardwareAbsent     # noqa: E402
 from ppm2png import read_ppm, write_png                # noqa: E402
+import layout as L                                     # noqa: E402  (the shared skin_part gate)
+import selftest_region_guard                           # noqa: E402  (device-free negative control)
 
 
 class Checker:
@@ -143,8 +145,11 @@ def run_scenario(dev, c):
     inputs = dev.inputs()
 
     # digital controls (buttons + stick-clicks)
-    for inp in [i for i in inputs if i["ev_type"] == "EV_KEY"]:
-        iid, sp = inp["id"], inp["skin_part"]
+    # L.region_rows is the ONE shared skin_part gate (tsp-3x7d): it hands back only rows a region
+    # assertion is possible for, records a class=system row's skip in the transcript, and FAILS a
+    # non-system row that is missing a skin_part. Do NOT re-introduce a direct inp["skin_part"].
+    for inp, sp in L.region_rows([i for i in inputs if i["ev_type"] == "EV_KEY"], c.chk):
+        iid = inp["id"]
         other = _other_part(dev, sp)
         dev.press(iid); snap(f"{iid}_press")
         c.chk(dev.framebuffer_region(sp).is_red(), f"{iid} -> {sp} lit on press")
@@ -153,24 +158,24 @@ def run_scenario(dev, c):
         c.chk(not dev.framebuffer_region(sp).is_red(), f"{iid} -> {sp} clears on release")
 
     # d-pad hat
-    for inp in [i for i in inputs if i.get("kind") == "hat"]:
-        iid, sp = inp["id"], inp["skin_part"]
+    for inp, sp in L.region_rows([i for i in inputs if i.get("kind") == "hat"], c.chk):
+        iid = inp["id"]
         dev.move_hat(iid, 1, 0); snap(f"{iid}_deflect")
         c.chk(dev.framebuffer_region(sp).is_red(), f"{iid} hat deflect -> {sp} lit")
         dev.move_hat(iid, 0, 0); snap(f"{iid}_centre")
         c.chk(not dev.framebuffer_region(sp).is_red(), f"{iid} hat centre -> {sp} dark")
 
     # analog sticks
-    for inp in [i for i in inputs if i.get("kind") == "stick"]:
-        iid, sp = inp["id"], inp["skin_part"]
+    for inp, sp in L.region_rows([i for i in inputs if i.get("kind") == "stick"], c.chk):
+        iid = inp["id"]
         dev.set_stick(iid, 1.0, 0.0); snap(f"{iid}_deflect")
         c.chk(dev.framebuffer_region(sp).is_red(), f"{iid} stick deflect -> {sp} lit")
         dev.set_stick(iid, 0.0, 0.0); snap(f"{iid}_centre")
         c.chk(not dev.framebuffer_region(sp).is_red(), f"{iid} stick centre -> {sp} dark")
 
     # analog triggers — monotonic sweep
-    for inp in [i for i in inputs if i.get("kind") == "trigger"]:
-        iid, sp = inp["id"], inp["skin_part"]
+    for inp, sp in L.region_rows([i for i in inputs if i.get("kind") == "trigger"], c.chk):
+        iid = inp["id"]
         fracs = []
         for v in (0.0, 0.25, 0.5, 0.75, 1.0):
             dev.set_axis(iid, v); snap(f"{iid}_{int(v*100):03d}")
@@ -278,6 +283,15 @@ def main():
 
     label_tag = f" [{label}]" if label else ""
     overall = 0
+
+    # Device-free negative control for the shared skin_part gate (tsp-3x7d), run ONCE before any
+    # device boots — the same shape as check-skin.py's geometry_unit_tests. It lives here rather
+    # than in a separate CI step so it rides `./sim check` and the sim-gate job automatically: a
+    # guard wired nowhere keeps reading as coverage.
+    print("\n############## region-guard negative control (device-free) ##############")
+    if selftest_region_guard.run(platform_dir):
+        overall = 1
+
     for dev_id in devices:
         print(f"\n############## {dev_id}{label_tag} ##############")
         results = {}

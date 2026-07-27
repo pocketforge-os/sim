@@ -158,6 +158,86 @@ def _fit(canvas, groups, margin=0.94):
                     max(1, int(round(w * s))), max(1, int(round(h * s))))
 
 
+# ---------------------------------------------------------------------------------------------
+# The SHARED skin_part gate (tsp-3x7d) — ONE predicate, both region-asserting checkers.
+#
+# `skin_part` is OPTIONAL in platform's schema (`$defs.input.required = ["id","kind","ev_type",
+# "code"]`), and so is `class` (enum gamepad|system, default gamepad). A row may legitimately
+# validate with NEITHER — the A133/A523 volume rocker (tsp-bwrg.16) is exactly that: a REAL
+# physical control on the LRADC node with no drawable front-skin region, filed `class = "system"`.
+# `check-control.py` / `check-skin.py` used to index `inp["skin_part"]` directly and KeyError'd on
+# such a row.
+#
+# The predicate composes the two facts rather than picking one:
+#
+#     skin_part PRESENT      -> a region assertion is POSSIBLE  -> assert (as before)
+#     absent + class=system  -> its absence is LEGITIMATE       -> skip (nothing to assert)
+#     absent + anything else -> its absence is a DEFECT         -> FAIL the check
+#
+# Why not the simpler "skip whenever skin_part is absent": that predicate is total by
+# construction, so a `class=gamepad` row that SHOULD carry a skin_part but lost one — precisely
+# the drift these checks exist to catch — would pass silently forever, converting a real check
+# into a decorative one. See the `guards-must-be-shown-to-fail` discipline; the negative control
+# in `selftest_region_guard.py` pins every arm of this predicate.
+#
+# Why not a defaulting `.get()`: a `None` skin_part only RELOCATES the crash —
+# `control_surface._rect_for()` raises `KeyError: no drawable region for '<id>'` when the group
+# lookup misses. Callers must `continue`, never default.
+#
+# NOTE the deliberate asymmetry with the ValueError below: "no region declared" (skip/fail here)
+# and "region declared but bogus" (`compute_layout`'s ValueError, above) stay DIFFERENT outcomes,
+# so a typo'd skin_part can never hide behind this gate.
+# ---------------------------------------------------------------------------------------------
+
+REGION_ASSERT = "assert"    # row carries a skin_part: run the region assertions
+REGION_SKIP = "skip"        # class=system with no skin_part: nothing drawable to assert
+REGION_FAIL = "fail"        # no skin_part and not class=system: a defect, fail the check
+
+DEFAULT_INPUT_CLASS = "gamepad"   # platform schema default for [[inputs]].class
+
+
+def region_disposition(inp):
+    """Classify ONE ``[[inputs]]`` row for the region-asserting checkers.
+
+    Returns ``(disposition, skin_part_or_None, message)`` where disposition is one of
+    ``REGION_ASSERT`` / ``REGION_SKIP`` / ``REGION_FAIL``. The message is always populated so a
+    caller can put the reason in its transcript — a skip that leaves no trace reads exactly like
+    coverage that never existed."""
+    iid = inp.get("id", "<unnamed>")
+    sp = inp.get("skin_part")
+    if sp:
+        return (REGION_ASSERT, sp, f"'{iid}' -> skin_part '{sp}'")
+    cls = inp.get("class", DEFAULT_INPUT_CLASS)
+    if cls == "system":
+        return (REGION_SKIP, None,
+                f"skip '{iid}': class=system and no skin_part — ambient system control with no "
+                f"drawable region, nothing for a region assertion to say")
+    return (REGION_FAIL, None,
+            f"input '{iid}' is class={cls}"
+            f"{' (default)' if 'class' not in inp else ''} but declares no skin_part — a gamepad "
+            f"control the skin can neither draw nor click is either a descriptor omission or "
+            f"should be class=system")
+
+
+def region_rows(inputs, chk):
+    """Yield ``(inp, skin_part)`` for every row a region assertion is POSSIBLE for.
+
+    Rows that legitimately have no drawable region are consumed here (recorded as a passing check
+    so the skip is visible in the transcript); rows that are missing a skin_part they should have
+    are consumed here too, as a FAILED check with an actionable message. Callers therefore never
+    see a row without a usable ``skin_part`` and never need their own guard.
+
+    ``chk`` is the checker's ``Checker.chk(cond, msg)`` — identical in both checkers."""
+    for inp in inputs:
+        disp, sp, msg = region_disposition(inp)
+        if disp == REGION_ASSERT:
+            yield inp, sp
+        elif disp == REGION_SKIP:
+            chk(True, msg)
+        else:
+            chk(False, msg)
+
+
 def part_for_input(desc, input_id):
     """Resolve an input id -> its skin_part (the region key)."""
     for inp in desc.get("inputs", []):
