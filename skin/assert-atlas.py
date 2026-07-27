@@ -24,10 +24,16 @@ never iterate the rest, so a non-front view's hit-boxes were compared against NO
 could not fail for the reason it exists. It now walks `skin.view_names()` and names the VIEW in
 every line, so an operator can tell which view drifted.
 
-The reverse direction ("a rendered control nobody binds") is view-aware for the same reason: an
-atlas control not bound in THIS view but bound in ANOTHER one is a `note`, not a failure — the
-descriptor is entitled to expose a control only from the angle it is usable at. A control bound in
-NO view at all is still a FAIL; that is the case this direction exists to catch.
+The reverse direction ("a rendered control nobody binds") is now computed STRICTLY PER VIEW —
+`views.<v>.controls` minus `[skin.views.<v>.parts]` — and every leftover is a FAIL (tsp-w3kx
+coordinator ruling, 2026-07-27). Atlas and descriptor are kept in lockstep PER VIEW by generation
+(`render.py --write-views`; "controls not visible from a view are simply absent here"), so a
+control the FRONT atlas renders while the FRONT table does not bind it is a REAL defect — that
+render draws a hit-box which resolves to nothing on a front-view tap — and downgrading it would
+neuter exactly what this direction exists to catch. A genuinely view-only control (in
+`views.top.controls` + `[skin.views.top.parts]`, absent from BOTH front tables) yields no leftover
+on either side, so per-view subtraction fixes the old false FAIL without any loosening. Where a
+leftover IS bound in some other view the FAIL message says so — diagnosis, not absolution.
 
 Exit 0 = every model-rendered skin's descriptor rects match its atlas exactly, in every view.
 Exit 1 = a mismatch (the skin would silently diverge from the .scad render — the exact drift D9
@@ -91,10 +97,11 @@ def check_device(platform_dir, device_id):
     fails = []
     checked = 0
 
-    # Which views bind each control, across the WHOLE descriptor. The reverse-direction check
-    # below asks "is this rendered control bound ANYWHERE", not "is it bound in this view" — a
-    # control the descriptor exposes only from the angle it is usable at (e.g. a top-edge button
-    # bound in `top` only) is correct data, and reporting it as unbound is a wrong finding.
+    # Which views bind each control, across the WHOLE descriptor. This does NOT soften the
+    # reverse-direction check below — that stays strict per view — it only lets a FAIL say where
+    # else the control IS bound, which is the difference between a usable diagnosis and a bare
+    # "unbound". Being bound elsewhere never excuses a view whose own render draws a hit-box the
+    # descriptor does not bind in that view.
     bound_in = {}
     for vn in views:
         for sp in skin.set_view(vn).parts:
@@ -138,18 +145,16 @@ def check_device(platform_dir, device_id):
             if not ok:
                 fails.append(f"{vn}:{sp}")
 
-        # atlas controls this view renders but the descriptor does not bind HERE
+        # atlas controls this view renders but the descriptor does not bind HERE. STRICT per view:
+        # every leftover is a FAIL. This view's render draws a hit-box that resolves to nothing on
+        # a tap in this view, whatever other views may do.
         for sp in sorted(set(acontrols) - set(v.parts)):
             elsewhere = [o for o in bound_in.get(sp, []) if o != vn]
-            if elsewhere:
-                print(f"  note  view {vn} {sp}: rendered in model-render.json view {vn} but not "
-                      f"bound in {_parts_table(vn)} — bound in view(s) {', '.join(elsewhere)}, "
-                      f"so not a mismatch")
-            else:
-                print(f"FAIL  view {vn} {sp}: in model-render.json view {vn} but has "
-                      f"NO descriptor [skin.parts] binding in ANY view "
-                      f"(views: {', '.join(views)})")
-                fails.append(f"{vn}:{sp}")
+            where = (f" (it IS bound in view(s) {', '.join(elsewhere)} — so this is per-view "
+                     f"drift, not an unknown control)" if elsewhere else "")
+            print(f"FAIL  view {vn} {sp}: in model-render.json view {vn} but has NO descriptor "
+                  f"{_parts_table(vn)} binding{where}")
+            fails.append(f"{vn}:{sp}")
 
     # a rendered view the descriptor never adopted (the mirror of the missing-view case above)
     for vn in sorted(set(meta.get("views", {})) - set(views)):

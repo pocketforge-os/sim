@@ -17,18 +17,23 @@ it as a subprocess, exactly as an operator or CI would.
                                                                               exits 0 pre-fix]
     row (b)  front-view rect perturbed        -> RED, naming view `front`    [pre-existing coverage
                                                                               not lost in the rewrite]
-    row (c)  control bound ONLY in a non-front view -> GREEN                 [no false FAIL — the
+    row (c)  genuinely view-only control      -> GREEN                       [no false FAIL — the
                                                                               opposite-direction defect]
+    row (h)  front atlas renders it, front table stops binding it -> RED     [(c)'s twin: strict
+                                                                              per-view stays strict]
     row (d)  pristine real a133 + a523        -> GREEN
     row (e)  atlas control bound in NO view   -> RED                         [the reverse-direction
                                                                               guard keeps its teeth]
     row (f)  descriptor part absent from that view's atlas -> RED, naming view `top`
     row (g)  descriptor view with no atlas counterpart     -> RED, naming view `rear`
 
-Rows (c) and (e) are the same *construction* (drop a part from ``[skin.parts]``) applied to two
-different controls — one bound in another view, one bound nowhere. They must land on OPPOSITE
-verdicts; a fix that made everything pass would collapse them, and a fix that kept the old blanket
-FAIL would collapse them the other way.
+Rows (c) and (h) are the pair that pins the reverse-direction semantics, and they are the reason
+the fix needs no loosening. (c) is a control the descriptor exposes only from `top` and that the
+front atlas never renders: strict per-view subtraction leaves no leftover anywhere, so it is GREEN.
+(h) drops the same kind of binding while the FRONT atlas still renders that rect — a hit-box that
+resolves to nothing on a front-view tap — so it is RED even though `top` binds the control. A "is
+it bound in ANY view" rule would wrongly excuse (h); strict per-view subtraction gets both right.
+(e) is (h) with the control bound nowhere at all, which must stay RED for its own reason.
 
 INPUTS ARE MANDATORY. If the platform tree or an expected descriptor/atlas file is missing this
 exits 2 LOUDLY — it never SKIPs and contributes nothing to the exit code, because CI is exactly the
@@ -169,6 +174,15 @@ def add_view(text, name, body, lit_body, parts):
     return text.rstrip("\n") + "\n" + "\n".join(block) + "\n"
 
 
+def add_input(text, input_id, skin_part, kind="button"):
+    """Append an ``[[inputs]]`` row. skin_model only surfaces a part in a view when some input
+    row names it, so a synthetic control needs one."""
+    return (text.rstrip("\n") + "\n\n[[inputs]]\n"
+            f'id        = "{input_id}"\n'
+            f'kind      = "{kind}"\n'
+            f'skin_part = "{skin_part}"\n')
+
+
 def edit_descriptor(scratch, dev, fn):
     path = _desc_path(scratch, dev)
     with open(path) as f:
@@ -176,6 +190,26 @@ def edit_descriptor(scratch, dev, fn):
     text = fn(text)
     with open(path, "w") as f:
         f.write(text)
+
+
+def edit_atlas(scratch, dev, fn):
+    path = os.path.join(scratch, "skins", dev, "model-render.json")
+    with open(path) as f:
+        atlas = json.load(f)
+    fn(atlas)
+    with open(path, "w") as f:
+        json.dump(atlas, f, indent=2, sort_keys=True)
+
+
+def add_view_only_control(scratch, dev, part, rect, view="top"):
+    """A GENUINELY view-only control: present in the atlas's ``views.<view>.controls`` AND the
+    descriptor's ``[skin.views.<view>.parts]``, absent from BOTH front tables. This is the shape
+    the bead's defect 2 means, and the one the coordinator's ruling turns on."""
+    x, y, w, h = rect
+    edit_atlas(scratch, dev, lambda a: a["views"][view]["controls"].update(
+        {part: {"x": x, "y": y, "w": w, "h": h}}))
+    edit_descriptor(scratch, dev, lambda t: add_input(
+        add_part(t, f"skin.views.{view}.parts", part, rect), part.replace("btn_", ""), part))
 
 
 # ---------------------------------------------------------------------------
@@ -243,19 +277,35 @@ def build_rows():
         expect_red=True,
         must_match=[r"^FAIL\s+view front btn_l1:.*\(76, 94, 189, 53\).*\(75, 94, 189, 53\)"]))
 
-    # (c) THE OPPOSITE-DIRECTION DEFECT. btn_l1 is dropped from [skin.parts] and kept in
-    #     [skin.views.top.parts] — a control the descriptor exposes ONLY in a non-front view.
-    #     The atlas is untouched, so its front `controls` still carries a btn_l1 rect. Pre-fix,
-    #     `set(controls) - set(skin.parts)` reported that as "NO descriptor [skin.parts] binding"
-    #     — a wrong finding about correct data. It must be GREEN, and it must NOT be reported as
-    #     unbound anywhere.
+    # (c) THE OPPOSITE-DIRECTION DEFECT, constructed as the lockstep contract actually produces
+    #     it (coordinator ruling, 2026-07-27): a GENUINELY view-only control — btn_power lives in
+    #     the atlas's views.top.controls AND [skin.views.top.parts], and in NEITHER front table.
+    #     Under strict per-view subtraction this leaves no leftover on either side, so defect 2
+    #     is fixed with no loosening at all. It must be GREEN and btn_power must never be named
+    #     in a FAIL line.
     rows.append(Row(
-        "c", "control bound ONLY in the top view (a133 btn_l1 dropped from [skin.parts]) -> GREEN",
+        "c", "genuinely top-only control (a133 btn_power in views.top + [skin.views.top.parts], "
+             "in NEITHER front table) -> GREEN",
+        lambda s: add_view_only_control(s, "a133", "btn_power", (700, 260, 40, 38)),
+        expect_red=False,
+        must_not_match=[r"^FAIL.*btn_power"],
+        note="the shape defect 2 actually takes; green pre-fix too — it proves no false FAIL, "
+             "it is not a verdict flip"))
+
+    # (h) THE DISCRIMINATING TWIN of (c), and the reason strict per-view subtraction is not a
+    #     softening: btn_l1 dropped from [skin.parts] while the FRONT atlas still renders a
+    #     btn_l1 rect. The front render draws a hit-box that resolves to nothing on a front-view
+    #     tap — real per-view drift — so RED is the CORRECT verdict even though btn_l1 is bound
+    #     in `top`. A "bound in ANY view" rule would wrongly excuse this; (c) and (h) landing on
+    #     opposite verdicts is what pins that it does not.
+    rows.append(Row(
+        "h", "front atlas renders a control the front table stops binding, though `top` binds it "
+             "(a133 btn_l1 dropped from [skin.parts]) -> RED",
         lambda s: edit_descriptor(s, "a133",
                                   lambda t: del_part(t, "skin.parts", "btn_l1")[0]),
-        expect_red=False,
-        must_not_match=[r"^FAIL.*btn_l1"],
-        note="pre-fix this is a FALSE FAIL"))
+        expect_red=True,
+        must_match=[r"^FAIL\s+view front btn_l1:.*NO descriptor \[skin\.parts\] binding.*"
+                    r"IS bound in view\(s\) top"]))
 
     # (d) The real, unmodified descriptors + atlases.
     rows.append(Row(
@@ -273,7 +323,7 @@ def build_rows():
         lambda s: edit_descriptor(s, "a133",
                                   lambda t: del_part(t, "skin.parts", "btn_guide")[0]),
         expect_red=True,
-        must_match=[r"^FAIL\s+view front btn_guide:.*NO descriptor.*binding in ANY view"]))
+        must_match=[r"^FAIL\s+view front btn_guide:.*NO descriptor \[skin\.parts\] binding$"]))
 
     # (f) Forward direction, non-front view: the descriptor binds a part in `top` that the top
     #     atlas does not render.
