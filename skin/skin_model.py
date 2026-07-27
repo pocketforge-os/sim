@@ -111,6 +111,79 @@ def _rotated_dims(w, h, rot):
     return (h, w) if rot in ("cw90", "cw270") else (w, h)
 
 
+# ---------------------------------------------------------------------------
+# OPTIONAL descriptor fields — the absent-vs-BOGUS split (tsp-bu5e)
+# ---------------------------------------------------------------------------
+# ``screens[].display_rect``, ``[skin].lit_body`` and ``[skin.views.<v>].lit_body`` are all
+# OPTIONAL in platform's ``schemas/capabilities.schema.json`` ($defs.screen.required is
+# [role, render_canvas, present, rotation]; $defs.skin.required and $defs.skinview.required are
+# both [body, parts]). This file used to index all three directly, so a descriptor platform's own
+# validator called VALID made ``Skin()`` raise a bare ``KeyError`` from inside the constructor.
+#
+# The ruling, following ``layout.py``:99-104 — the in-repo precedent that deliberately gives
+# ABSENT and PRESENT-BUT-BOGUS different outcomes (absent skin_part -> ``continue``; present but
+# unknown -> hard ``ValueError``):
+#
+#   ABSENCE is a DECLARATION           -> DEGRADE, visibly.  "this device has no lit art" /
+#                                         "nothing composites a framebuffer into this bezel".
+#   PRESENT-BUT-UNRESOLVABLE is a      -> FAIL LOUDLY.       "it HAS lit art, at this path" —
+#     CLAIM THAT FAILED                                      and there is nothing there.
+#
+# Degrading both identically is the plausible-and-WRONG fix: it makes a typo indistinguishable
+# from an intention and turns the only signal that would catch descriptor drift into a no-op.
+# Per-field reasoning is in ``skin/README.md`` ("Optional descriptor fields"); the negative
+# control that proves each arm is ``skin/selftest_skin_model_optional.py``.
+
+def _warn(msg):
+    """A degradation the operator must be able to SEE. Absence is legitimate, but a silent
+    fallback is indistinguishable from a passing check — so every degraded field says so."""
+    sys.stderr.write(f"skin_model: WARN {msg}\n")
+
+
+def _require_rect(rect, where):
+    """A DECLARED rect must be well-formed -> a designed ValueError, never ``int(r['w'])``'s bare
+    ``KeyError: 'w'`` from inside a constructor.
+
+    The bounds are copied from the schema's own ``$defs.rect`` (x, y, w, h all required; w and h
+    >= 1), so this arm can only ever fire on a descriptor the platform validator ALSO rejects —
+    it adds no strictness of its own, it just fails legibly instead of cryptically."""
+    if not isinstance(rect, dict):
+        raise ValueError(f"{where}: expected a rect table {{x, y, w, h}}, "
+                         f"got {type(rect).__name__} ({rect!r})")
+    out = []
+    for k in ("x", "y", "w", "h"):
+        if k not in rect:
+            raise ValueError(f"{where}: rect is missing '{k}' (x, y, w and h are all required)")
+        try:
+            v = int(rect[k])
+        except (TypeError, ValueError):
+            raise ValueError(f"{where}: rect '{k}' = {rect[k]!r} is not an integer") from None
+        if k in ("w", "h") and v < 1:
+            raise ValueError(f"{where}: rect '{k}' = {v} must be >= 1 "
+                             f"(a zero/negative {'width' if k == 'w' else 'height'} "
+                             f"composites nothing)")
+        out.append(v)
+    return tuple(out)
+
+
+def _resolve_art(platform_dir, rel, where, omittable):
+    """A DECLARED art path must resolve to a real file.
+
+    ``body`` is schema-REQUIRED and already hard-failed here (``png_dims`` opens it); ``lit_body``
+    is optional, and its ABSENCE is handled by the caller. What this rejects is the third case —
+    a path that is present but resolves to nothing — which is a descriptor typo with no legitimate
+    reading. ``omittable`` only tunes the remedy hint."""
+    if not isinstance(rel, str) or not rel.strip():
+        raise ValueError(f"{where}: art path is empty" +
+                         (" (omit the key entirely if there is none)" if omittable else ""))
+    path = os.path.join(platform_dir, rel)
+    if not os.path.isfile(path):
+        raise ValueError(f"{where}: declares art '{rel}' but no such file at {path}" +
+                         (" — fix the path, or omit the key if this view has no lit art"
+                          if omittable else " — fix the path"))
+    return path
+
+
 class Action:
     """A control_surface call: ``getattr(dev, verb)(input_id, *args)``. Equality lets the proof
     assert a GUI-resolved action is IDENTICAL to the headless test's direct inject."""
@@ -201,16 +274,22 @@ class View:
     """One rendered VIEW of a device (tsp-65jc.27): its bezel image + the clickable parts
     visible from that angle. The FRONT view carries the live-fb ``display_rect``; an extra
     view (e.g. ``top``) shows only the bezel + its controls and has ``display_rect = None``
-    (the screen is a front-face feature — nothing to composite an fb into)."""
+    (the screen is a front-face feature — nothing to composite an fb into).
 
-    __slots__ = ("name", "body_path", "lit_body_path", "skin_w", "skin_h",
+    ``has_lit_body`` is False when the descriptor declared no ``lit_body`` for this view: the art
+    is legitimately absent, ``lit_body_path`` falls back to ``body_path``, and press highlights
+    are therefore invisible in this view. The flag exists so that fallback is READABLE — a silent
+    substitution would look exactly like working lit art (tsp-bu5e)."""
+
+    __slots__ = ("name", "body_path", "lit_body_path", "has_lit_body", "skin_w", "skin_h",
                  "parts", "order", "display_rect")
 
-    def __init__(self, name, body_path, lit_body_path, skin_w, skin_h,
+    def __init__(self, name, body_path, lit_body_path, has_lit_body, skin_w, skin_h,
                  parts, order, display_rect):
         self.name = name
         self.body_path = body_path
         self.lit_body_path = lit_body_path
+        self.has_lit_body = has_lit_body  # False => lit_body_path IS body_path (no lit art)
         self.skin_w = skin_w
         self.skin_h = skin_h
         self.parts = parts               # {skin_part: Part}
@@ -242,28 +321,49 @@ class Skin:
         screen = self.desc["screens"][0]
         rc = screen["render_canvas"]
         self.canvas_w, self.canvas_h = int(rc["w"]), int(rc["h"])
-        dr = screen["display_rect"]
-        front_display = (int(dr["x"]), int(dr["y"]), int(dr["w"]), int(dr["h"]))
+        # display_rect is OPTIONAL (schema $defs.screen). ABSENT = this screen declares no region
+        # in the bezel to composite the live fb into -> the front view degrades to exactly the
+        # state an edge view is already in (display_rect None; `display 0 0 0 0 none` + `fb -`).
+        # PRESENT = the rect must be well-formed, or we say so (see _require_rect).
+        dr = screen.get("display_rect")
+        if dr is None:
+            front_display = None
+            _warn(f"{device_id}: screens[0] declares no display_rect — the front view composites "
+                  f"NO live framebuffer (the app screen will not appear in the bezel)")
+        else:
+            front_display = _require_rect(dr, f"{device_id}: screens[0].display_rect")
         self.rotation = screen.get("rotation", "none")
 
         # FRONT view: [skin] body + [skin.parts]; carries the fb display_rect.
         self.views = {}
         self._view_order = []
-        self._add_view("front", skin["body"], skin["lit_body"],
-                       skin.get("parts", {}), front_display)
+        self._add_view("front", skin["body"], skin.get("lit_body"),
+                       skin.get("parts", {}), front_display, "[skin]")
         # Additional edge views: [skin.views.<name>] body + [skin.views.<name>.parts]; no fb.
         for name, vskin in skin.get("views", {}).items():
-            self._add_view(name, vskin["body"], vskin["lit_body"],
-                           vskin.get("parts", {}), None)
+            self._add_view(name, vskin["body"], vskin.get("lit_body"),
+                           vskin.get("parts", {}), None, f"[skin.views.{name}]")
 
         self.set_view("front")
 
-    def _add_view(self, name, body_rel, lit_rel, raw_parts, display_rect):
+    def _add_view(self, name, body_rel, lit_rel, raw_parts, display_rect, where):
         """Build a View: cross-reference the descriptor inputs against THIS view's parts, so a
         control absent from the view's parts table (e.g. the d-pad in the top view) is simply
-        not present in that view. Same Part/input model as before, per view."""
-        body_path = os.path.join(self.platform_dir, body_rel)
-        lit_body_path = os.path.join(self.platform_dir, lit_rel)
+        not present in that view. Same Part/input model as before, per view.
+
+        ``lit_rel`` is None when the descriptor omitted ``lit_body`` for this view — optional per
+        schema, so the view degrades to its unlit body art and SAYS SO. A lit_body that is present
+        but unresolvable is a different thing entirely and raises (see _resolve_art)."""
+        w = f"{self.device_id}: {where}"
+        body_path = _resolve_art(self.platform_dir, body_rel, f"{w} body", omittable=False)
+        has_lit_body = lit_rel is not None
+        if has_lit_body:
+            lit_body_path = _resolve_art(self.platform_dir, lit_rel, f"{w} lit_body",
+                                         omittable=True)
+        else:
+            lit_body_path = body_path
+            _warn(f"{w} declares no lit_body — press highlights are NOT visible in view "
+                  f"'{name}' (falling back to the unlit body art)")
         skin_w, skin_h = png_dims(body_path)
         parts, order = {}, []
         for inp in self.desc.get("inputs", []):
@@ -275,7 +375,7 @@ class Skin:
                 parts[sp] = Part(sp, (int(r["x"]), int(r["y"]), int(r["w"]), int(r["h"])))
                 order.append(sp)
             parts[sp].inputs.append(inp)
-        self.views[name] = View(name, body_path, lit_body_path, skin_w, skin_h,
+        self.views[name] = View(name, body_path, lit_body_path, has_lit_body, skin_w, skin_h,
                                 parts, order, display_rect)
         self._view_order.append(name)
 
@@ -293,6 +393,7 @@ class Skin:
         self.active_view = name
         self.body_path = v.body_path
         self.lit_body_path = v.lit_body_path
+        self.has_lit_body = v.has_lit_body
         self.skin_w, self.skin_h = v.skin_w, v.skin_h
         self.parts = v.parts
         self._order = v.order
@@ -417,11 +518,22 @@ class Skin:
         return round(fx, 4)
 
     # -------- compositor geometry (canvas fb -> bezel display_rect) --------
+    def _display_rect_or_die(self):
+        """The three compositor methods below are meaningless without a display_rect. That was
+        already reachable for an EDGE view (which has none by design) and is now reachable for a
+        front view whose screen declares none — so say which view and why, rather than raising
+        ``TypeError: cannot unpack non-sequence NoneType`` two frames in. Callers that want to
+        BRANCH on it (emit_scene, the CLI, check-skin) test ``display_rect is None`` instead."""
+        if self.display_rect is None:
+            raise ValueError(f"{self.device_id}: view '{self.active_view}' has no display_rect — "
+                             f"there is no framebuffer region to composite into")
+        return self.display_rect
+
     def composite_rotation(self):
         """DATA-DRIVEN: 'none' or screens.rotation, whichever orientation's aspect matches the
         descriptor's display_rect. For a133/a523 -> 'none' (the landscape canvas). Per-device
         CODE never branches on the SoC; the descriptor's display_rect decides."""
-        _, _, dw, dh = self.display_rect
+        _, _, dw, dh = self._display_rect_or_die()
         target = dw / float(dh) if dh else 1.0
         cands = [("none", (self.canvas_w, self.canvas_h)),
                  (self.rotation, _rotated_dims(self.canvas_w, self.canvas_h, self.rotation))]
@@ -439,7 +551,7 @@ class Skin:
         proof's sampled point lands where the renderer drew it."""
         rot = self.composite_rotation()
         sw, sh = _rotated_dims(self.canvas_w, self.canvas_h, rot)
-        _, _, dw, dh = self.display_rect
+        _, _, dw, dh = self._display_rect_or_die()
         return (dw / float(sw), dh / float(sh))
 
     def map_canvas_point(self, cx, cy):
@@ -457,7 +569,7 @@ class Skin:
         else:
             rx, ry = cx, cy
         sx, sy = self.composite_scale()
-        dx, dy, _, _ = self.display_rect
+        dx, dy, _, _ = self._display_rect_or_die()
         return (dx + rx * sx, dy + ry * sy)
 
     # -------- scene emission (the protocol skin-render.c reads) --------
@@ -547,6 +659,11 @@ def _cmd_show(a):
         "skin": [s.skin_w, s.skin_h],
         "canvas": [s.canvas_w, s.canvas_h],
         "display_rect": list(s.display_rect) if s.display_rect is not None else None,
+        # An OPTIONAL field that degraded must be readable from the output, not inferred from a
+        # null that could equally mean "edge view" (tsp-bu5e). has_lit_body False => lit_body is
+        # the UNLIT body art, so nothing on this bezel changes when a control is pressed.
+        "lit_body": os.path.relpath(s.lit_body_path, s.platform_dir) if s.has_lit_body else None,
+        "has_lit_body": s.has_lit_body,
         "rotation": s.rotation,
         "parts": [{"name": p.name, "kind": p.kind, "rect": list(p.rect),
                    "inputs": [i["id"] for i in p.inputs]} for p in s.ordered_parts()],
