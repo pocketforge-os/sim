@@ -37,8 +37,11 @@ README *and* a false red in `check-synth.py` (`tsp-477r`).
 Section B asserts `plan()`'s node topology against **the descriptor's own declared node
 membership** — each `[[inputs]]` row's `source`, defaulting to `identity.match.evdev_name`.
 That is deliberately a *different* derivation from `plan()`, which groups by evdev code
-**prefix** (`BTN_*` → pad, `KEY_*` → system): the two disagree the moment a row is dropped,
-fabricated, or routed to the wrong node, which is what gives the assertion content. An
+**prefix** (`BTN_*` → pad, `KEY_*` → system): the two disagree the moment a row is **routed to
+the wrong node**, which is what gives the assertion content. **Scope, precisely:** section B
+catches MISROUTING only. It does *not* catch a dropped or fabricated row — both derivations read
+the same descriptor, so a row that vanishes vanishes from both sides and section B stays green;
+**section A** (live kernel vs `plan()`) is what catches those, and it does. An
 expectation read back out of `plan()` would be a tautology that passes unconditionally — the
 exact failure mode `selftest-check-synth.py` exists to rule out. There is no
 `BTN_THUMBL/THUMBR` assertion because the pad-set equality **subsumes** it: the pad node must

@@ -33,6 +33,14 @@ SDL mapping fields. Missing hardware is **omission**, never a fabricated row.
   per node. (descriptor → ioctls → kernel → `EVIOCG*` probe, compared to the descriptor.)
 - **B. OMISSION / MATRIX** — a133: one node, no `BTN_THUMBL/THUMBR`, no system node. a523:
   two nodes, pad gains `BTN_THUMBL/THUMBR`, system node carries `KEY_HOMEPAGE`.
+  > ⚠ **SUPERSEDED as a statement about the devices — kept as a dated record of THIS run.**
+  > It was true of the descriptor this run used (platform `6cc6664`). `tsp-bwrg.16` then gave the
+  > a133 `class = "system"` `KEY_VOLUMEUP`/`KEY_VOLUMEDOWN` rows, so **the a133 now yields TWO
+  > nodes as well** — and section B no longer asserts any per-device node count at all: it derives
+  > the expectation from each `[[inputs]]` row's `source`. Do not read this line as a current
+  > device fact, and do not re-assert a device's node count in prose (`tsp-477r`; see
+  > `synth/README.md`). The rest of this file is likewise a 2026-06-26 run record, not a
+  > standing claim.
 - **C. caps.py `probe-diff`** (independent asymmetric-subset logic) reports `OK` for both.
 - **D. SDL3 native-x86 == arm64-under-`qemu-tsp`** byte-identical (builtin AND descriptor
   mappings); recognized as a GAMEPAD; gamecontrollerdb GUID == descriptor `sdl_guid`

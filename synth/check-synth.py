@@ -13,8 +13,10 @@ Claims:
      DESCRIPTOR ITSELF declares. The expectation is derived from each [[inputs]] row's
      `source` (the evdev NODE NAME the control lives on; absent = identity.match.evdev_name,
      the primary gamepad node) — an INDEPENDENT derivation from plan(), which groups by evdev
-     code PREFIX (BTN_* -> pad, KEY_* -> system). The two disagree the moment a row is
-     dropped, fabricated, or routed to the wrong node. NO DEVICE NAME appears in any
+     code PREFIX (BTN_* -> pad, KEY_* -> system). The two disagree the moment a row is ROUTED
+     TO THE WRONG NODE. They do NOT diverge on a row that is dropped or fabricated: both
+     derivations read the same descriptor, so a row that vanishes vanishes from both — those
+     are section A's to catch (live kernel vs plan()), and it does. NO DEVICE NAME appears in any
      assertion: whether a device yields one node or two, and whether its pad carries
      BTN_THUMBL/THUMBR, is descriptor DATA and is asserted as such (see synth/README.md
      "B is descriptor-derived"). Negative control: synth/selftest-check-synth.py.
@@ -66,9 +68,14 @@ def declared_node_membership(desc):
     caps.py (tsp-bwrg.16): ``source`` = the evdev NODE NAME a control lives on; ABSENT means the
     primary gamepad node, i.e. ``identity.match.evdev_name``. plan() instead groups by evdev code
     PREFIX (BTN_* -> pad node, KEY_* -> system node). Asserting one against the other is what
-    gives section B content: a row dropped, fabricated, or routed to the wrong node makes the two
-    disagree. A single shared derivation (or an expectation read back out of plan()) would be a
-    tautology that passes unconditionally — the failure mode this function exists to avoid.
+    gives section B content: a MISROUTED row makes the two disagree. A single shared derivation
+    (or an expectation read back out of plan()) would be a tautology that passes unconditionally
+    — the failure mode this function exists to avoid.
+
+    SCOPE, stated precisely so the claim is not read wider than it is: this catches MISROUTING.
+    It does NOT catch a dropped or fabricated row — both derivations read the same descriptor, so
+    a row that vanishes vanishes from BOTH sides of the comparison and section B stays green.
+    Section A (live kernel vs plan()) is what catches those, and it does.
 
     ABS rows are excluded: they are pad-only by construction in plan() and are already asserted
     exactly against the live kernel in section A.
