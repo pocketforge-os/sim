@@ -42,7 +42,28 @@ the app draws from, and the host's own region asserts read the *same* `compute_l
 | [`broker_stub.py`](broker_stub.py) | thin in-process E2 broker stub: capability presence derived from descriptor sensor/actuator rows; typed `HardwareAbsent` / cooperative `PermissionDenied`. |
 | [`hwprobe-lite.c`](hwprobe-lite.c) | the IDENTICAL arm64 app: reads the synth uinput nodes, lights the pressed control onto a memfd virtual fb (`.4` tsp-osr-safe software-render), FIFO snapshot handshake. |
 | [`check-control.py`](check-control.py) | **the CI-gate entrypoint** — drives the surface over the descriptor×scenario matrix, asserts headline + full input/capability matrix, checks native==qemu byte-identical parity. |
+| [`selftest_region_guard.py`](selftest_region_guard.py) | the device-free **negative control** for `layout.region_rows` — constructs each broken state and proves the right arm fires for the right reason. Runs as a pre-pass inside `check-control.py`, so `./sim check` and the CI gate cover it. Standalone: `pf-sim selftest-region-guard`. |
 | [`run-control.sh`](run-control.sh) | end-to-end on modelmaker: compile the app (x86+arm64), run the suite under sudo. |
+
+## The `skin_part` gate (tsp-3x7d)
+
+`skin_part` is **optional** in platform's descriptor schema, and so is `class` (`gamepad`|`system`,
+default `gamepad`) — a row may validate with neither. The A133/A523 volume rocker is exactly that
+shape (`class = "system"`, no drawable front-skin region), and the region-asserting loops used to
+index `inp["skin_part"]` directly and `KeyError` on it.
+
+`layout.region_rows()` is the ONE predicate both `check-control.py` and `check-skin.py` now use:
+
+| row | outcome |
+|-----|---------|
+| `skin_part` present | **assert** — run the region assertions, as before |
+| absent + `class = "system"` | **skip** — no drawable region; the skip is printed, never silent |
+| absent + anything else | **FAIL** — a gamepad control the skin can neither draw nor click is a descriptor omission, or should be `class = "system"` |
+| present but **not in `[skin.parts]`** | **hard `ValueError`** from `compute_layout` (unchanged) — "no region declared" and "region declared but bogus" stay different outcomes, so a typo can never hide behind the gate |
+
+The blanket alternative — *skip whenever `skin_part` is absent* — is total by construction and
+would let a `gamepad` row that lost its `skin_part` pass forever, turning a real check into a
+decorative one. `selftest_region_guard.py` pins every arm of that distinction.
 
 ## Run
 

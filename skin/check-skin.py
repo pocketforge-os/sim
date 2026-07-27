@@ -39,6 +39,7 @@ sys.path.insert(0, os.path.join(HERE, "..", "fb"))
 
 from control_surface import Device, HardwareAbsent          # noqa: E402
 from ppm2png import read_ppm, read_png, write_ppm, write_png  # noqa: E402
+import layout as L                                           # noqa: E402  (shared skin_part gate)
 import skin_model as SM                                      # noqa: E402
 
 SKIN_RENDER = os.environ.get("SKIN_RENDER")
@@ -230,9 +231,30 @@ def run_device(device_id, platform_dir, launcher, outdir, apps, do_render):
                   f"col={col} (rot={skin.composite_rotation()})")
 
         # ---- A + B over the descriptor-generic input matrix ----
-        for inp in inputs:
-            iid, kind, sp = inp["id"], inp.get("kind"), inp["skin_part"]
-            part = skin.parts[sp]
+        # TWO distinct gates, in order — they guard different things and neither subsumes the other:
+        #   1. L.region_rows (tsp-3x7d): the shared skin_part predicate — a class=system row with no
+        #      skin_part is skipped (no drawable region); a non-system row missing one FAILS. This
+        #      loop has no `kind` filter at all, so it is the most exposed call site in the repo.
+        #      Do NOT re-introduce a direct inp["skin_part"].
+        #   2. skin.parts.get(sp): `skin.parts` is the ACTIVE VIEW's parts table, not the global
+        #      [skin.parts]. With [skin.views] in the descriptor a control can be validly declared
+        #      and simply not drawn in this view (skin_model._add_view models exactly this with
+        #      `if not sp or sp not in raw_parts: continue`). A skin_part that is bogus GLOBALLY is
+        #      NOT swallowed here — compute_layout already raised ValueError inside Device() above,
+        #      before this loop can run — so a typo can never hide behind "not in this view".
+        #      ⚠ HONESTY: gate 2 is DEFENSIVE, and is NOT reachable on today's descriptors. This
+        #      loop runs the FRONT view, whose parts table is by construction the global
+        #      [skin.parts] that compute_layout already validated, so the .get() cannot miss here
+        #      — forcing set_view("top") is what makes the pre-fix KeyError fire (coordinator's
+        #      finding, tsp-3x7d). It is kept because it is correct and the view set is data, but
+        #      do not read it as covered: no test exercises this branch today.
+        for inp, sp in L.region_rows(inputs, c.chk):
+            iid, kind = inp["id"], inp.get("kind")
+            part = skin.parts.get(sp)
+            if part is None:
+                c.chk(True, f"skip '{iid}': skin_part '{sp}' is not drawn in the active view "
+                            f"'{skin.active_view}' (valid globally — compute_layout validated it)")
+                continue
             rx, ry, rw, rh = part.rect
             cx, cy = _center(part.rect)
 
