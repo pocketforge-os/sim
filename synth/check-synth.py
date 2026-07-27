@@ -9,9 +9,17 @@ Claims:
   A. ROUND-TRIP EXACT — for every synth node, the LIVE kernel advertises EXACTLY the codes
      + absinfo that plan(descriptor) said to register (no extra, no missing, ranges equal).
      This is descriptor -> ioctls -> kernel -> EVIOCG* probe, compared to the descriptor.
-  B. OMISSION / MATRIX — a133 has ONE node and no BTN_THUMBL/THUMBR; a523 has TWO nodes
-     (adds a system node carrying KEY_HOMEPAGE) and the pad gains BTN_THUMBL/THUMBR. The
-     a133-vs-a523 delta is pure descriptor data.
+  B. NODE TOPOLOGY / OMISSION — plan()'s node set and per-node key sets equal what the
+     DESCRIPTOR ITSELF declares. The expectation is derived from each [[inputs]] row's
+     `source` (the evdev NODE NAME the control lives on; absent = identity.match.evdev_name,
+     the primary gamepad node) — an INDEPENDENT derivation from plan(), which groups by evdev
+     code PREFIX (BTN_* -> pad, KEY_* -> system). The two disagree the moment a row is ROUTED
+     TO THE WRONG NODE. They do NOT diverge on a row that is dropped or fabricated: both
+     derivations read the same descriptor, so a row that vanishes vanishes from both — those
+     are section A's to catch (live kernel vs plan()), and it does. NO DEVICE NAME appears in any
+     assertion: whether a device yields one node or two, and whether its pad carries
+     BTN_THUMBL/THUMBR, is descriptor DATA and is asserted as such (see synth/README.md
+     "B is descriptor-derived"). Negative control: synth/selftest-check-synth.py.
   C. probe-diff (caps.py, independent logic) reports OK — descriptor codes are a subset of
      the live probe under the asymmetric rule.
   D. SDL3 under qemu-tsp == native x86 (byte-identical, builtin + descriptor mappings);
@@ -51,6 +59,39 @@ def code_val(name):
     if name in ec.CODE:
         return ec.CODE[name]
     return int(name, 16)  # "0x.." fallback (should not occur with the sim's own probe)
+
+
+def declared_node_membership(desc):
+    """Descriptor -> (primary-node EV_KEY code names, off-pad EV_KEY code names, {source: [names]}).
+
+    The descriptor's OWN statement of node topology, and deliberately NOT the one plan() uses.
+    caps.py (tsp-bwrg.16): ``source`` = the evdev NODE NAME a control lives on; ABSENT means the
+    primary gamepad node, i.e. ``identity.match.evdev_name``. plan() instead groups by evdev code
+    PREFIX (BTN_* -> pad node, KEY_* -> system node). Asserting one against the other is what
+    gives section B content: a MISROUTED row makes the two disagree. A single shared derivation
+    (or an expectation read back out of plan()) would be a tautology that passes unconditionally
+    — the failure mode this function exists to avoid.
+
+    SCOPE, stated precisely so the claim is not read wider than it is: this catches MISROUTING.
+    It does NOT catch a dropped or fabricated row — both derivations read the same descriptor, so
+    a row that vanishes vanishes from BOTH sides of the comparison and section B stays green.
+    Section A (live kernel vs plan()) is what catches those, and it does.
+
+    ABS rows are excluded: they are pad-only by construction in plan() and are already asserted
+    exactly against the live kernel in section A.
+    """
+    primary = desc.get("identity", {}).get("match", {}).get("evdev_name")
+    pad_names, sys_names, sources = [], [], {}
+    for inp in desc.get("inputs", []):
+        if inp.get("ev_type") != "EV_KEY":
+            continue
+        src = inp.get("source")
+        on_pad = src is None or (primary is not None and src == primary)
+        for name in [c for c in inp.get("code", "").split(",") if c]:
+            (pad_names if on_pad else sys_names).append(name)
+            if not on_pad:
+                sources.setdefault(src, []).append(name)
+    return pad_names, sys_names, sources
 
 
 def main():
@@ -96,20 +137,41 @@ def main():
                   f"[{spec.role}] {cname} absinfo == descriptor (min/max/fuzz/flat)"
                   f" got={got} want={(mn, mx, fz, fl)}")
 
-    print("B. omission / matrix")
+    # B. The expectation is DERIVED FROM THE DESCRIPTOR, never from the device NAME. The old form
+    # hard-coded `if a.device == "a133": check(not has_system, ...)`, which asserted a hardware
+    # fact the descriptor later superseded (tsp-bwrg.16 added class=system KEY_VOLUMEUP/DOWN rows
+    # to the a133) and went red on a correct descriptor. Note what is NOT here: an assertion keyed
+    # on BTN_THUMBL/THUMBR. It is not deleted — it is SUBSUMED, and strictly strengthened, by the
+    # pad-set equality below, which pins the pad node to EXACTLY the descriptor's primary-node
+    # rows. That reds if L3/R3 are fabricated on a descriptor that omits them AND if they are
+    # dropped from one that declares them, for every device, with no device name in the loop.
+    print("B. node topology / omission (plan() vs the descriptor's OWN declared node membership)")
+    want_pad_names, want_sys_names, sys_sources = declared_node_membership(desc)
+    want_pad = {code_val(n) for n in want_pad_names}
+    want_sys = {code_val(n) for n in want_sys_names}
     pad = next(s for s in specs if s.role == "pad")
-    has_l3r3 = {ec.BTN["BTN_THUMBL"], ec.BTN["BTN_THUMBR"]} <= set(pad.keys)
-    has_system = any(s.role == "system" for s in specs)
-    if a.device == "a133":
-        check(not has_l3r3, "a133: pad has NO BTN_THUMBL/THUMBR (omission)")
-        check(not has_system, "a133: NO system-key node (no KEY_* rows)")
-    elif a.device == "a523":
-        check(has_l3r3, "a523: pad HAS BTN_THUMBL+BTN_THUMBR (added by data)")
-        sysnode = cap_by_name.get(f"{desc['identity']['manufacturer']} System")
-        check(has_system and sysnode is not None, "a523: system-key node present")
-        if sysnode is not None:
-            check("KEY_HOMEPAGE" in sysnode.get("keys", []),
-                  "a523: system node advertises KEY_HOMEPAGE (172, not 0x172)")
+    sysspecs = [s for s in specs if s.role == "system"]
+    got_pad = set(pad.keys)
+    got_sys = {k for s in sysspecs for k in s.keys}
+
+    check(bool(sysspecs) == bool(want_sys_names),
+          f"system-key node present IFF the descriptor declares EV_KEY row(s) off the primary "
+          f"node: descriptor declares {len(want_sys_names)} such code(s) on "
+          f"{sorted(sys_sources)}, plan() produced {len(sysspecs)} system node(s)")
+    check(got_pad == want_pad,
+          f"[pad] keys are EXACTLY the descriptor's primary-node EV_KEY rows "
+          f"(extra={sorted(got_pad - want_pad)}, missing={sorted(want_pad - got_pad)})")
+    check(got_sys == want_sys,
+          f"[system] keys are EXACTLY the descriptor's off-pad EV_KEY rows "
+          f"(extra={sorted(got_sys - want_sys)}, missing={sorted(want_sys - got_sys)})")
+    for spec in sysspecs:
+        sysnode = cap_by_name.get(spec.name)
+        if sysnode is None:
+            continue  # section A already reds on a missing node — do not double-report it here
+        unresolved = [n for n in sysnode.get("keys", []) if n not in ec.CODE]
+        check(not unresolved,
+              f"[system] live node advertises canonical evdev NAMES, not hex fallbacks "
+              f"(e.g. KEY_HOMEPAGE as 172, not 0x172) (unresolved={unresolved})")
 
     print("C. caps.py probe-diff (independent asymmetric subset check)")
     pd = read(a.probe_diff)

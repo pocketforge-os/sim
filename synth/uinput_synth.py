@@ -10,10 +10,15 @@ descriptor's expectation made into a kernel-visible node.
 
 NODE GROUPING (honest topology, derived — not per-device coded): gamepad codes (BTN_*/ABS_*)
 land on the 045e:028e "TRIMUI Player1" pad node (the SPIKE-3 device); system keys (KEY_*,
-e.g. a523's Home) land on a SEPARATE generic node — matching caps.py's own model (emit-sdldb
-excludes KEY_* from the gamepad mapping; probe-diff resolves KEY_* against ANY node) and the
-a523 descriptor's note that Home is "a system key, NOT the gamepad's guide". So a133 yields
-ONE node and a523 yields TWO — another facet of the omission proof.
+e.g. VOL+/- and the Pro S's Home) land on a SEPARATE generic node — matching caps.py's own
+model (emit-sdldb excludes KEY_* from the gamepad mapping; probe-diff resolves KEY_* against
+ANY node) and the descriptors' own per-row ``source`` (the evdev node a control lives on;
+absent = the primary gamepad node). HOW MANY NODES A DEVICE YIELDS IS DESCRIPTOR DATA, not a
+per-device fact stated here: a descriptor with no off-pad EV_KEY rows yields ONE node, one
+with them yields TWO. (Do not re-assert a specific device's node count in prose — tsp-bwrg.16
+gave the a133 class=system VOL+/- rows, so the once-true "a133 yields ONE node" became a
+false claim in this docstring AND a false red in check-synth.py. See tsp-477r.)
+check-synth.py section B asserts exactly that equivalence, per device, by data.
 
 The bus/vendor/product/version of the pad node are derived from ``identity.sdl_guid`` (the
 authoritative SDL identity) and cross-checked against ``identity.match`` — so the GUID SDL

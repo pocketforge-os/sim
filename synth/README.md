@@ -20,12 +20,33 @@ fabricated row.
 - Gamepad codes (`BTN_*` / `ABS_*`) → the `045e:028e` **"TRIMUI Player1"** pad node (the
   SPIKE-3 device). Its bus/vendor/product/version come from `identity.sdl_guid` (the
   authoritative SDL identity), cross-checked against `identity.match`.
-- System keys (`KEY_*`, e.g. a523's Home = `KEY_HOMEPAGE`) → a **separate** generic node.
-  This matches caps.py's own model (`emit-sdldb` excludes `KEY_*` from the gamepad mapping;
-  `probe-diff` resolves `KEY_*` against *any* node) and the a523 descriptor's note that Home
-  is "a system key, NOT the gamepad's guide".
+- System keys (`KEY_*`, e.g. VOL± and the Pro S's Home = `KEY_HOMEPAGE`) → a **separate**
+  generic node. This matches caps.py's own model (`emit-sdldb` excludes `KEY_*` from the
+  gamepad mapping; `probe-diff` resolves `KEY_*` against *any* node), the descriptors' own
+  per-row `source` (the evdev node a control lives on; absent = the primary gamepad node),
+  and the a523 descriptor's note that Home is "a system key, NOT the gamepad's guide".
 
-So **a133 → one node, a523 → two nodes** — another facet of the omission proof.
+**How many nodes a device yields is descriptor DATA, not a fact stated here:** a descriptor
+with no off-pad `EV_KEY` rows yields one node, one with them yields two. Do not re-assert a
+specific device's node count in prose or in a check — `tsp-bwrg.16` gave the a133
+`class = "system"` VOL± rows, and the once-true "a133 → one node" became a false claim in this
+README *and* a false red in `check-synth.py` (`tsp-477r`).
+
+### `check-synth.py` section B is descriptor-derived
+
+Section B asserts `plan()`'s node topology against **the descriptor's own declared node
+membership** — each `[[inputs]]` row's `source`, defaulting to `identity.match.evdev_name`.
+That is deliberately a *different* derivation from `plan()`, which groups by evdev code
+**prefix** (`BTN_*` → pad, `KEY_*` → system): the two disagree the moment a row is **routed to
+the wrong node**, which is what gives the assertion content. **Scope, precisely:** section B
+catches MISROUTING only. It does *not* catch a dropped or fabricated row — both derivations read
+the same descriptor, so a row that vanishes vanishes from both sides and section B stays green;
+**section A** (live kernel vs `plan()`) is what catches those, and it does. An
+expectation read back out of `plan()` would be a tautology that passes unconditionally — the
+exact failure mode `selftest-check-synth.py` exists to rule out. There is no
+`BTN_THUMBL/THUMBR` assertion because the pad-set equality **subsumes** it: the pad node must
+carry *exactly* the descriptor's primary-node rows, which reds on a fabricated L3/R3 as well
+as a dropped one, for every device.
 
 ## Files
 
@@ -35,8 +56,9 @@ So **a133 → one node, a523 → two nodes** — another facet of the omission p
 | `gen_evdev_codes.py` | regenerate / `--check` `evdev_codes.py` from `input-event-codes.h` + caps.py vocab |
 | `uinput_synth.py` | descriptor → uinput device(s); the **id→code resolver + `press`/`release`/`set_axis`/`move_hat`** API C5 builds on; `plan`/`create` CLI |
 | `probe_evdev.py` | sim-owned EVIOCG* dumper (E1 capture shape), decoded via `evdev_codes.py` |
-| `check-synth.py` | per-device assertions: round-trip EXACT, omission/matrix, probe-diff, SDL, native==qemu |
-| `run-synth.sh` | end-to-end matrix runner on a host with `/dev/uinput` + `qemu-tsp` + SDL3 |
+| `check-synth.py` | per-device assertions: round-trip EXACT, node topology/omission, probe-diff, SDL, native==qemu |
+| `selftest-check-synth.py` | **negative control** for `check-synth.py` section B — hermetic (no descriptor checkout, no `/dev/uinput`, no qemu); shows the check goes RED for its own stated reasons and stays GREEN on the rows that must not be weakened |
+| `run-synth.sh` | end-to-end matrix runner on a host with `/dev/uinput` + `qemu-tsp` + SDL3 (runs the selftest as a device-free preflight) |
 
 The `evdev_codes.py` table is **generated, never hand-typed** — kernel ABI numbers are
 sourced from `/usr/include/linux/input-event-codes.h` (+ `input.h` for `BUS_*`), valued for

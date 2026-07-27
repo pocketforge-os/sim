@@ -20,6 +20,13 @@
 #   DEVICES    space-separated device ids                          (default "a133 a523")
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
+
+# Preflight: the checker's OWN negative control (tsp-477r). Device-free and hermetic, so it
+# runs before any env/rig requirement below — if check-synth.py's assertions can no longer go
+# red for their stated reasons, a green matrix run below would mean nothing.
+echo "== preflight: check-synth.py negative control (selftest-check-synth.py) =="
+python3 "$HERE/selftest-check-synth.py"
+
 QEMU_TSP="${QEMU_TSP:?set QEMU_TSP (baked in the pocketforge-sim image; see docker/README.md)}"
 SDLDIR="${SDLDIR:?set SDLDIR (baked in the pocketforge-sim image)}"
 PLATFORM="${PLATFORM:?set PLATFORM (baked in the pocketforge-sim image)}"
@@ -35,7 +42,12 @@ cd "$WORK"
 
 # raw C evdev probe (proven in tsp-an4.1) + the SDL3 gamepad probe (tsp-an4.2) — reused as-is.
 cp "$SPIKE3/sdl3-gamepad-probe.c" .
-cp "$QEMU_TSP"/../../regression/probe.c ./evdev-probe.c 2>/dev/null || \
+# NOTE $(dirname ...): QEMU_TSP names the qemu-aarch64 BINARY (it is exec'd as one below), so the
+# former "$QEMU_TSP"/../../regression/probe.c could never resolve — the kernel returns ENOTDIR the
+# moment a path traverses through a file, so this cp ALWAYS failed and claim E was unreachable.
+# From the documented layout <repo>/build/qemu-tsp/qemu-aarch64, dirname + ../.. is <repo>, where
+# the qemu-tsp repo keeps regression/. (tsp-477r)
+cp "$(dirname "$QEMU_TSP")"/../../regression/probe.c ./evdev-probe.c 2>/dev/null || \
   { echo "ERROR: regression/probe.c not found next to QEMU_TSP — point QEMU_TSP at a qemu-tsp build dir (host-dev/regression only; not part of the containerized suite)"; exit 1; }
 
 echo "== regenerate-check the evdev code table vs the kernel ABI + caps.py vocab =="
