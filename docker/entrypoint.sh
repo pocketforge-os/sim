@@ -30,6 +30,12 @@ case "$cmd" in
   check-control) exec python3 "$SIM/control/check-control.py" "$@" ;;
   check-sensor)  exec python3 "$SIM/sensor/check-sensor.py"  "$@" ;;
   check-skin)    exec python3 "$SIM/skin/check-skin.py"      "$@" ;;
+  check-generic) exec python3 "$SIM/generic/check-generic.py" "$@" ;;
+  run-app)
+    dev="${1:?usage: pf-sim run-app <device> <arm64-binary> [--shot path] [--window] [-- app-args]}"; app="${2:?missing arm64 binary}"; shift 2
+    exec python3 "$SIM/generic/generic_capture.py" --device "$dev" --platform "$PLATFORM" \
+      --app "$app" --launcher qemu --qemu-tsp "$QEMU_TSP" --rootfs "$ROOTFS" \
+      --harness "$SIM/harness/run-in-harness.sh" --skin-render "$SKIN_RENDER" "$@" ;;
   check-broker-stub) exec python3 "$SIM/control/check-broker-stub.py" "$@" ;;
   # The skin_part-gate negative control (tsp-3x7d; no qemu, no uinput). It ALSO runs as a
   # pre-pass inside check-control, so the gate covers it with no workflow edit — this verb is
@@ -71,6 +77,6 @@ case "$cmd" in
   shell)         exec /bin/bash "$@" ;;
   *)
     echo "pf-sim: unknown command '$cmd'" >&2
-    echo "usage: pf-sim {check-control|check-sensor|check-skin|check-broker-stub|selftest-region-guard|selftest-skin-optional|check-synth-selftest|matrix|window|window-selftest|shell} [devices...]" >&2
+    echo "usage: pf-sim {check-control|check-sensor|check-skin|check-generic|run-app|check-broker-stub|selftest-region-guard|selftest-skin-optional|check-synth-selftest|matrix|window|window-selftest|shell} [args...]" >&2
     exit 2 ;;
 esac

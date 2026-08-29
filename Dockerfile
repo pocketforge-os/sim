@@ -124,6 +124,7 @@ RUN OUT=/sdl3-window SRC=/sdl3-window/SDL /src/skin/build-sdl3-window.sh && \
 FROM toolchain AS apps
 COPY control /src/control
 COPY skin    /src/skin
+COPY generic /src/generic
 COPY --from=sdl3 /sdl3-render /sdl3-render
 RUN mkdir -p /apps && \
     gcc -O2 -ffp-contract=off -I/sdl3-render/x86/include \
@@ -132,6 +133,8 @@ RUN mkdir -p /apps && \
     aarch64-linux-gnu-gcc -O2 -ffp-contract=off -static -I/sdl3-render/arm64/include \
         -o /apps/hwprobe-lite.arm64 /src/control/hwprobe-lite.c \
         /sdl3-render/arm64/lib/libSDL3.a -lm -ldl -lpthread -lrt && \
+    gcc -O2 -o /apps/fb-pattern.x86 /src/generic/fb-pattern.c && \
+    aarch64-linux-gnu-gcc -O2 -static -o /apps/fb-pattern.arm64 /src/generic/fb-pattern.c && \
     gcc -O2 -I/sdl3-render/x86/include \
         -o /apps/skin-render /src/skin/skin-render.c \
         /sdl3-render/x86/lib/libSDL3.a -lm -ldl -lpthread -lrt && \
@@ -182,6 +185,8 @@ ENV QEMU_TSP=/opt/pf/qemu-tsp/qemu-aarch64 \
     PLATFORM=/opt/pf/platform \
     APP_X86=/opt/pf/apps/hwprobe-lite.x86 \
     APP_ARM64=/opt/pf/apps/hwprobe-lite.arm64 \
+    PATTERN_X86=/opt/pf/apps/fb-pattern.x86 \
+    PATTERN_ARM64=/opt/pf/apps/fb-pattern.arm64 \
     SKIN_RENDER=/opt/pf/apps/skin-render \
     SDLR=/opt/pf/sdl3-render \
     SDLDIR=/opt/pf/sdl3

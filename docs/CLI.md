@@ -15,6 +15,7 @@ container entrypoint the CI gate runs, with the exact caps the nested bwrap+qemu
 | Command | What it does |
 |---------|--------------|
 | `./sim run <device>` | Boot one virtual device and run its **headless logical suite** (control + sensor + skin). The dev inner-loop. |
+| `./sim run-app <device> <arm64-bin> [--shot file.ppm\|--window] [-- args…]` | Attach a generic `/dev/fb0`, run any arm64 binary under qemu-tsp, and composite its pixels into the skin. |
 | `./sim gui [device]` | Open the **clickable `.scad`-rendered skin** — press the bezel, watch the control light. Live X11 window on a display host; autonomous Xvfb self-test when headless. Default `a133`. |
 | `./sim check [devices…]` | The **full CI matrix**, exactly as [`sim-gate.yml`](../.github/workflows/sim-gate.yml) runs it (control + sensor + skin). With **no args** the device list **and** per-device posture (blocking / advisory / excluded) are **data-driven from `platform/ci-matrix.toml`** (read via `pf caps matrix` inside the image) — so a device added to that matrix runs here with no CLI change. Naming devices runs just those, hard. Run this before you push. |
 | `./sim devices` | List the virtual devices this image can run. |
@@ -24,6 +25,18 @@ container entrypoint the CI gate runs, with the exact caps the nested bwrap+qemu
 | `./sim version` | Show the pinned platform / qemu-tsp / SDL3 refs. |
 
 `./sim --help` teaches the whole product on one screen.
+
+### Generic framebuffer applications
+
+```bash
+./sim run-app a133 ./my-app.arm64 --shot my-app.ppm
+./sim run-app a133 ./my-app.arm64 --window -- --app-option value
+```
+
+The binary needs no simulator request/response protocol: it opens and mmaps `/dev/fb0`.
+The simulator exposes `PF_FB_WIDTH`, `PF_FB_HEIGHT`, and `PF_FB_STRIDE` (bytes); pixels
+are XRGB8888. Capture uses a fixed cadence. `--shot` is the offscreen CI form and
+`--window` is the live X11 form. Raw and composited artifacts appear in `sim-capture/`.
 
 ## Requirements (and the errors that name them)
 

@@ -10,6 +10,15 @@ The PocketForge virtual device simulator (epic **tsp-an4 / infra-104 / E5**) pro
 - accessibility-preference propagation (e.g. `hapticsEnabled` off → silent no-op);
 - per-variant button/skin coverage (a133 vs a523 = data, not code).
 
+The generic `run-app` display path additionally proves that XRGB8888 bytes an arm64
+binary writes to its attached `/dev/fb0` are observed by the host capture supervisor and
+placed in the descriptor-defined display rectangle of the existing skin compositor. Its
+native/qemu pattern check is byte-identical and uses no hwprobe-lite FIFO protocol.
+
+That statement is deliberately narrow: shared-memory polling does **not** prove frame
+pacing, vsync, latency, tearing, GPU/display-engine execution, real fbdev ioctls, panel
+rotation, or performance. The host compositor is SDL's software renderer.
+
 It is **NOT** honest about the following **FIVE** things, and **MUST say so**. These stay
 the **flash → serial → webcam hardware gate's SOLE authority**. The two are
 complementary, never substitutes.

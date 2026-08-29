@@ -121,7 +121,7 @@ run_selftests() {
 run_suites_over() { # <devices...> — control+sensor+skin over the devices; return rc (no build/validate)
   local suite rc=0
   run_selftests || rc=$?
-  for suite in control sensor skin; do
+  for suite in control sensor skin generic; do
     run_suite "$suite" "$@" || rc=$?
   done
   return "$rc"
@@ -237,6 +237,31 @@ cmd_gui() {
   fi
 }
 
+cmd_run_app() {
+  [ $# -ge 2 ] || die "usage: sim run-app <device> <arm64-binary> [--shot host.ppm] [--window] [-- app-args]"
+  local device="$1" app; app="$(readlink -f "$2")"; shift 2
+  [ -f "$app" ] || die "arm64 binary not found: $app"
+  need_docker; build_demo; validate_devices "$DEMO_IMAGE" "$device"
+  local outdir; outdir="$(pwd)/sim-capture"; mkdir -p "$outdir"
+  local args=(--frame /out/frame.ppm); local docker_args=(-v "$app:/run-app:ro" -v "$outdir:/out")
+  local arg
+  while [ $# -gt 0 ]; do
+    arg="$1"; shift
+    case "$arg" in
+      --shot) [ $# -gt 0 ] || die "--shot needs a host path"; args+=(--shot "/out/$(basename "$1")"); shift ;;
+      --window) args+=(--window) ;;
+      --) args+=(-- "$@" ); break ;;
+      *) die "sim run-app: unknown flag '$arg' (put app arguments after --)" ;;
+    esac
+  done
+  if [[ " ${args[*]} " == *" --window "* ]]; then
+    [ -n "${DISPLAY:-}" ] && xdpyinfo_ok || die "--window needs a reachable X display; use --shot for headless capture"
+    docker_args+=(-e DISPLAY="$DISPLAY" -v /tmp/.X11-unix:/tmp/.X11-unix)
+  fi
+  docker run --rm "${SIM_CAPS[@]}" "${docker_args[@]}" "$DEMO_IMAGE" run-app "$device" /run-app "${args[@]}"
+  info "generic capture artifacts: $outdir"
+}
+
 cmd_devices() { # list the virtual devices this image can run (AVD-style discovery)
   need_docker; build_base
   step "virtual devices shipped in ${IMAGE}:"
@@ -305,6 +330,9 @@ ${BOLD}COMMANDS${RST}
   ${GRN}gui${RST} [device]       Open the clickable .scad-rendered skin — press the bezel and watch
                      the control light up. Live X11 window on a display host; falls back
                      to an autonomous Xvfb self-test when headless. ${DIM}default: a133${RST}
+  ${GRN}run-app${RST} <device> <arm64-bin> [--shot file.ppm|--window] [-- args…]
+                     Attach a generic /dev/fb0, run the binary under qemu-tsp, and composite its
+                     pixels into the device skin. No app-specific snapshot protocol is required.
   ${GRN}check${RST} [devices…]   The ${BOLD}full CI matrix${RST}, exactly as sim-gate.yml runs it. With no
                      args the device list + per-device posture (blocking/advisory/excluded) are
                      ${BOLD}data-driven${RST} from platform's ci-matrix.toml; naming devices runs just those,
@@ -333,6 +361,7 @@ main() {
   case "$cmd" in
     run)     cmd_run "$@" ;;
     gui)     cmd_gui "$@" ;;
+    run-app) cmd_run_app "$@" ;;
     check)   cmd_check "$@" ;;
     devices) cmd_devices "$@" ;;
     build)   cmd_build "$@" ;;
