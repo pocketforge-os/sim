@@ -71,3 +71,7 @@ rotation/timing. A sim "it renders" proves **nothing** about on-device GPU bring
 stays the flash→serial→webcam hardware gate's sole authority (`tsp-osr`, `capture-screen.sh`).
 Per-SoC graphics diverge (A133 sunxifb/no-KMS/fb0 vs A523 Mali/DRM-KMS); this software fb
 proves neither. See `../docs/HONESTY-CONTRACT.md`.
+
+For arbitrary arm64 binaries that write XRGB8888 pixels directly to `/dev/fb0`, see
+[`../generic/README.md`](../generic/README.md) and `sim run-app`. That path is separate
+from both this SDL pattern renderer and the hwprobe-lite snapshot FIFOs.
