@@ -1,0 +1,16 @@
+case=graceful kind=frame value=app
+case=graceful kind=protected-intake value=safe-return
+case=graceful kind=ack value=presentation
+case=graceful kind=receipt value=Returned { session_id: "session-1" }
+case=graceful kind=frame value=shell
+case=forced kind=frame value=app
+case=forced kind=protected-intake value=safe-return
+case=forced kind=ack value=presentation
+case=forced kind=receipt value=ForcedClose { session_id: "session-1" }
+case=forced kind=frame value=shell
+case=crash kind=frame value=app
+case=crash kind=ack value=presentation
+case=crash kind=receipt value=Crash { session_id: "session-1", summary: "modeled-crash" }
+case=crash kind=frame value=shell
+case=recovery kind=frame value=app
+case=recovery kind=event value=RecoveryRequired

@@ -286,6 +286,9 @@ cmd_shell() { # interactive debug shell inside the (base or demo) container
 }
 
 cmd_doctor() { # preflight only — the "is this host ready?" report
+  local shell_suite=0
+  if [ "${1:-}" = "--shell-suite" ]; then shell_suite=1; shift; fi
+  [ $# -eq 0 ] || die "usage: sim doctor [--shell-suite]"
   step "sim doctor — host readiness for the virtual device simulator"
   local ok=1
   if command -v docker >/dev/null 2>&1; then printf '  %s docker installed (%s)\n' "${GRN}✓${RST}" "$(docker --version 2>/dev/null | awk '{print $3}' | tr -d ,)" >&2
@@ -296,7 +299,13 @@ cmd_doctor() { # preflight only — the "is this host ready?" report
     else printf '  %s /dev/uinput MISSING — sudo modprobe uinput\n' "${RED}✗${RST}" >&2; ok=0; fi
   if [ -n "${DISPLAY:-}" ] && xdpyinfo_ok; then printf '  %s X display reachable (%s) — sim gui runs LIVE\n' "${GRN}✓${RST}" "$DISPLAY" >&2
     else printf '  %s no X display — sim gui falls back to the Xvfb self-test (headless)\n' "${YEL}•${RST}" >&2; fi
-  [ "$ok" = "1" ] && printf '%s\n' "${GRN}${BOLD}ready.${RST} Try: ./sim run a133" >&2 || die "not ready — fix the ✗ items above."
+  [ "$ok" = "1" ] || die "not ready — fix the ✗ items above."
+  if [ "$shell_suite" = "1" ]; then
+    build_base
+    step "§15.2 shell suite — real arm64 launcher + authority core, MODELED cooperative transcripts"
+    docker run --rm "${_net[@]}" "${SIM_CAPS[@]}" "$IMAGE" check-shell
+  fi
+  printf '%s\n' "${GRN}${BOLD}ready.${RST} Try: ./sim run a133" >&2
 }
 
 xdpyinfo_ok() { command -v xdpyinfo >/dev/null 2>&1 && xdpyinfo >/dev/null 2>&1; }
@@ -340,7 +349,7 @@ ${BOLD}COMMANDS${RST}
   ${GRN}devices${RST}            List the virtual devices this image can run.
   ${GRN}build${RST} [base|demo|all]   Build the pinned image(s) without running anything.
   ${GRN}shell${RST} [demo]       Interactive debug shell inside the container (caps attached).
-  ${GRN}doctor${RST}             Check this host is ready (docker, /dev/uinput, display) — with fixes.
+  ${GRN}doctor${RST} [--shell-suite] Check readiness; optionally run §15.2 modeled shell cases.
   ${GRN}version${RST}            Show the pinned platform / qemu-tsp / SDL3 refs.
 
 ${BOLD}EXAMPLES${RST}

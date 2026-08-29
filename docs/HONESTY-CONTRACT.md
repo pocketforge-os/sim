@@ -15,6 +15,13 @@ binary writes to its attached `/dev/fb0` are observed by the host capture superv
 placed in the descriptor-defined display rectangle of the existing skin compositor. Its
 native/qemu pattern check is byte-identical and uses no hwprobe-lite FIFO protocol.
 
+The F12 shell suite (`./sim doctor --shell-suite`) source-builds pinned launcher and runtime
+revisions and runs their arm64 launcher and foreground-authority core under qemu-tsp. Its ordered
+frames, acknowledgements, and receipts are **MODELED cooperative semantic transcripts only**.
+They do not prove real systemd unit/target ownership, enforced termination, independent-authority
+survivability, or hostile-app confinement. F13 owns real packaged lifecycle and enforcement proof;
+F14 owns sanctioned device acceptance and physical measurements.
+
 That statement is deliberately narrow: shared-memory polling does **not** prove frame
 pacing, vsync, latency, tearing, GPU/display-engine execution, real fbdev ioctls, panel
 rotation, or performance. The host compositor is SDL's software renderer.

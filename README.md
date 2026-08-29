@@ -20,6 +20,7 @@ clone:
 
 ```bash
 ./sim doctor         # is my host ready?  (docker, /dev/uinput, display — each ✗ names its fix)
+./sim doctor --shell-suite # plus deterministic §15.2 MODELED cases and honesty report
 ./sim run a133       # boot one virtual device, run its headless logical suite
 ./sim gui a133       # the clickable .scad-rendered skin — press the bezel, watch it light
 ./sim check          # the full CI matrix (a133 + a523), EXACTLY as the gate runs it
@@ -47,6 +48,7 @@ Full command reference: [`docs/CLI.md`](docs/CLI.md). New to the project? Start 
 | Command | What it does |
 |---------|--------------|
 | `./sim doctor` | Check the host is ready (docker, `/dev/uinput`, display) — each ✗ names its fix. |
+| `./sim doctor --shell-suite` | Run readiness plus the pinned arm64 launcher/authority cooperative §15.2 suite, per-case PASS, deterministic hashes, and the F13/F14 honesty boundary. |
 | `./sim run <device>` | Boot one virtual device, run its **headless logical suite** (control + sensor + skin). The dev inner-loop. |
 | `./sim gui [device]` | Open the **clickable `.scad`-rendered skin** — press the bezel, watch the control light. Live X11 window on a display host; autonomous Xvfb self-test when headless. Default `a133`. |
 | `./sim check [devices…]` | The **full CI matrix**, exactly as [`sim-gate.yml`](.github/workflows/sim-gate.yml) runs it. With no args the device list **and** per-device posture (blocking / advisory / excluded) are **data-driven from `platform/ci-matrix.toml`**; naming devices runs just those, hard. **This is the gate** — green here == green on your PR. |

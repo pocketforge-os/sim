@@ -22,6 +22,7 @@ container entrypoint the CI gate runs, with the exact caps the nested bwrap+qemu
 | `./sim build [base\|demo\|all]` | Build the pinned image(s) without running anything. |
 | `./sim shell [demo]` | Interactive debug shell inside the container (caps attached). |
 | `./sim doctor` | Check the host is ready (docker, `/dev/uinput`, display) — each ✗ names its fix. |
+| `./sim doctor --shell-suite` | Also run deterministic §15.2 modeled shell transcripts and print the F13/F14 honesty report. |
 | `./sim version` | Show the pinned platform / qemu-tsp / SDL3 refs. |
 
 `./sim --help` teaches the whole product on one screen.

@@ -16,7 +16,7 @@
 #   - platform          -> a pinned commit (descriptors + skins + caps.py)
 # apt layer -> PINNED to a snapshot.debian.org timestamp (tsp-65jc.17, infra-113 D11 tail — this
 #   CLOSES the former "apt from live bookworm" reproducible-from-clean gap that tied tsp-cv7.4.13).
-#   The two base stages (toolchain, runtime) rewrite their apt sources to the dated snapshot mirror
+#   The three base stages (toolchain, shell-apps, runtime) rewrite their apt sources to the dated snapshot mirror
 #   below BEFORE any apt-get; every derived stage (sdl3-window <- toolchain, demo <- runtime, and the
 #   qemu/sdl3/rootfs/apps/platform builders <- toolchain) inherits those baked sources, so ALL
 #   build-time apt installs now resolve against one frozen timestamp. Bumping the pin = a one-line
@@ -42,6 +42,10 @@ ARG QEMU_TSP_COMMIT=329c754ad34e4b8062f2a941ab35383811df70bf
 # keep the two in sync).
 ARG PLATFORM_REPO=https://github.com/pocketforge-os/platform.git
 ARG PLATFORM_COMMIT=6cc6664639bdcc361923c93387c323d581b181b4
+ARG LAUNCHER_REPO=https://github.com/pocketforge-os/launcher.git
+ARG LAUNCHER_COMMIT=a254229f1f59ead79072f44a01c0f5b22db63b82
+ARG RUNTIME_REPO=https://github.com/pocketforge-os/runtime.git
+ARG RUNTIME_COMMIT=80f3942a8c40a613d1ed4394158391d64e9ec53e
 
 # ───────────────────────────── toolchain base (x86) ─────────────────────────────
 FROM debian:bookworm@${DEBIAN_DIGEST} AS toolchain
@@ -152,6 +156,28 @@ RUN git clone "${PLATFORM_REPO}" /platform \
  && rm -rf /platform/.git \
  && test -f /platform/devices/a133/capabilities.toml && test -f /platform/core/caps.py
 
+FROM rust:1.85.1-bookworm@sha256:e51d0265072d2d9d5d320f6a44dde6b9ef13653b035098febd68cce8fa7c0bc4 AS shell-apps
+ARG LAUNCHER_REPO
+ARG LAUNCHER_COMMIT
+ARG RUNTIME_REPO
+ARG RUNTIME_COMMIT
+ARG SNAPSHOT_TIMESTAMP
+RUN set -eux; \
+    printf 'deb http://snapshot.debian.org/archive/debian/%s/ bookworm main\ndeb http://snapshot.debian.org/archive/debian-security/%s/ bookworm-security main\ndeb http://snapshot.debian.org/archive/debian/%s/ bookworm-updates main\n' \
+      "${SNAPSHOT_TIMESTAMP}" "${SNAPSHOT_TIMESTAMP}" "${SNAPSHOT_TIMESTAMP}" > /etc/apt/sources.list; \
+    rm -f /etc/apt/sources.list.d/debian.sources; \
+    printf 'Acquire::Check-Valid-Until "false";\nAcquire::Retries "5";\n' > /etc/apt/apt.conf.d/99pf-snapshot
+RUN apt-get update && apt-get install -y --no-install-recommends gcc-aarch64-linux-gnu libc6-dev-arm64-cross git ca-certificates \
+ && rm -rf /var/lib/apt/lists/* && rustup target add aarch64-unknown-linux-gnu
+RUN git clone "${RUNTIME_REPO}" /src/runtime && git -C /src/runtime checkout --quiet "${RUNTIME_COMMIT}" \
+ && git clone "${LAUNCHER_REPO}" /src/launcher && git -C /src/launcher checkout --quiet "${LAUNCHER_COMMIT}"
+COPY shell/Cargo.toml /src/sim-authority/Cargo.toml
+COPY shell/Cargo.lock /src/sim-authority/Cargo.lock
+COPY shell/src /src/sim-authority/src
+ENV CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc
+RUN cargo build --locked --release --target aarch64-unknown-linux-gnu --manifest-path /src/launcher/Cargo.toml -p pf-shell \
+ && cargo build --locked --release --target aarch64-unknown-linux-gnu --manifest-path /src/sim-authority/Cargo.toml
+
 # ───────────────────────────── runtime (slim; everything baked in) ─────────────────────────────
 FROM debian:bookworm@${DEBIAN_DIGEST} AS runtime
 ENV DEBIAN_FRONTEND=noninteractive
@@ -178,6 +204,8 @@ COPY --from=sdl3     /sdl3-render                           /opt/pf/sdl3-render
 COPY --from=rootfs   /rootfs/rootfs-arm64                   /opt/pf/rootfs-arm64
 COPY --from=apps     /apps                                  /opt/pf/apps
 COPY --from=platform /platform                              /opt/pf/platform
+COPY --from=shell-apps /src/launcher/target/aarch64-unknown-linux-gnu/release/pf-shell /opt/pf/apps/pf-shell.arm64
+COPY --from=shell-apps /src/sim-authority/target/aarch64-unknown-linux-gnu/release/pf-sim-session-authority /opt/pf/apps/pf-session-authority.arm64
 
 # image-internal paths the check-*.py read from the environment (retires the host-path absolutes)
 ENV QEMU_TSP=/opt/pf/qemu-tsp/qemu-aarch64 \
@@ -188,6 +216,8 @@ ENV QEMU_TSP=/opt/pf/qemu-tsp/qemu-aarch64 \
     PATTERN_X86=/opt/pf/apps/fb-pattern.x86 \
     PATTERN_ARM64=/opt/pf/apps/fb-pattern.arm64 \
     SKIN_RENDER=/opt/pf/apps/skin-render \
+    SHELL_ARM64=/opt/pf/apps/pf-shell.arm64 \
+    SESSION_AUTHORITY_ARM64=/opt/pf/apps/pf-session-authority.arm64 \
     SDLR=/opt/pf/sdl3-render \
     SDLDIR=/opt/pf/sdl3
 
