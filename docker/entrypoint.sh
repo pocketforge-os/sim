@@ -35,7 +35,8 @@ case "$cmd" in
     dev="${1:?usage: pf-sim run-app <device> <arm64-binary> [--shot path] [--window] [-- app-args]}"; app="${2:?missing arm64 binary}"; shift 2
     exec python3 "$SIM/generic/generic_capture.py" --device "$dev" --platform "$PLATFORM" \
       --app "$app" --launcher qemu --qemu-tsp "$QEMU_TSP" --rootfs "$ROOTFS" \
-      --harness "$SIM/harness/run-in-harness.sh" --skin-render "$SKIN_RENDER" "$@" ;;
+      --harness "$SIM/harness/run-in-harness.sh" --skin-render "$SKIN_RENDER" \
+      --frame /out/frame.ppm "$@" ;;
   check-broker-stub) exec python3 "$SIM/control/check-broker-stub.py" "$@" ;;
   # The skin_part-gate negative control (tsp-3x7d; no qemu, no uinput). It ALSO runs as a
   # pre-pass inside check-control, so the gate covers it with no workflow edit — this verb is

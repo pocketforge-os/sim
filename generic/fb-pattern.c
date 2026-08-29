@@ -5,6 +5,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <sys/mman.h>
 #include <unistd.h>
 
@@ -18,7 +19,11 @@ static void box(uint32_t *p, int w, int h, int x, int y, int bw, int bh, uint32_
         if (xx >= 0 && yy >= 0) p[(size_t)yy*w+xx] = c;
 }
 
-int main(void) {
+int main(int argc, char **argv) {
+    if (argc != 1 && (argc != 3 || strcmp(argv[1], "--app-option") || strcmp(argv[2], "value"))) {
+        fputs("expected app arguments: --app-option value\n", stderr);
+        return 5;
+    }
     int w = atoi(getenv("PF_FB_WIDTH") ? getenv("PF_FB_WIDTH") : "0");
     int h = atoi(getenv("PF_FB_HEIGHT") ? getenv("PF_FB_HEIGHT") : "0");
     const char *path = getenv("PF_FB0") ? getenv("PF_FB0") : "/dev/fb0";

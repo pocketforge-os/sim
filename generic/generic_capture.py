@@ -57,6 +57,8 @@ def main():
     ap.add_argument("--skin-render"); ap.add_argument("--cadence-ms", type=int, default=50)
     ap.add_argument("app_args", nargs=argparse.REMAINDER)
     a = ap.parse_args()
+    if a.app_args[:1] == ["--"]:
+        a.app_args = a.app_args[1:]
     skin, (w,h) = dimensions(a.platform, a.device)
     os.makedirs(os.path.dirname(os.path.abspath(a.frame)), exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="pf-generic-") as work:

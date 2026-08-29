@@ -28,15 +28,21 @@ def main():
         for dev in a.devices:
             print(f"generic {dev}:")
             native=os.path.join(work,f"{dev}.native.ppm"); arm=os.path.join(work,f"{dev}.arm.ppm")
+            arm_args=os.path.join(work,f"{dev}.arm-args.ppm")
             shot=os.path.join(work,f"{dev}.shot.ppm"); png=os.path.join(work,f"{dev}.png")
             common=[sys.executable,CAPTURE,"--device",dev,"--platform",required["PLATFORM"]]
             subprocess.run(common+["--launcher","native","--app",required["PATTERN_X86"],"--frame",native],check=True)
             subprocess.run(common+["--launcher","qemu","--app",required["PATTERN_ARM64"],
                 "--qemu-tsp",required["QEMU_TSP"],"--rootfs",required["ROOTFS"],"--harness",harness,
                 "--frame",arm,"--shot",shot,"--skin-render",required["SKIN_RENDER"]],check=True)
+            subprocess.run(common+["--launcher","qemu","--app",required["PATTERN_ARM64"],
+                "--qemu-tsp",required["QEMU_TSP"],"--rootfs",required["ROOTFS"],"--harness",harness,
+                "--frame",arm_args,
+                "--","--app-option","value"],check=True)
             pw, ph, rgb = read_ppm(arm); write_png(png, pw, ph, rgb)
             baseline=os.path.join(HERE,"baseline",dev,"frame.png")
             checks=[("native == qemu",sha(native)==sha(arm)),
+                    ("guest receives app options without -- separator",sha(arm_args)==sha(arm)),
                     ("qemu == committed baseline",os.path.isfile(baseline) and sha(png)==sha(baseline)),
                     ("skin composite shot produced",os.path.getsize(shot)>100)]
             for label,ok in checks:
