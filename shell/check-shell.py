@@ -1,12 +1,22 @@
 #!/usr/bin/env python3
 """F12 cooperative qemu transcript suite. All lifecycle observations are MODELED."""
-import argparse, hashlib, os, subprocess, sys, tempfile
+import argparse, collections, hashlib, os, subprocess, sys, tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 HONESTY = ("MODELED ONLY: cooperative qemu-tsp transcripts do not prove real systemd/unit/"
            "foreground-target lifecycle, enforced termination, authority survivability, isolation, "
            "GPU/fbdev-ioctl/KMS, or physical timing. F13 owns real packaged lifecycle/enforcement "
            "proof; F14 owns sanctioned device acceptance and measurements.")
+MIN_FOREGROUND_FRACTION = 0.01
+
+def frame_content(frame):
+    """Return whether a 32-bpp frame contains nonblank, composed UI structure."""
+    if not frame or len(frame) % 4 or not any(frame):
+        return False, 0.0
+    pixels=(frame[i:i+4] for i in range(0,len(frame),4))
+    counts=collections.Counter(pixels)
+    foreground=1-(max(counts.values())/sum(counts.values()))
+    return foreground >= MIN_FOREGROUND_FRACTION, foreground
 
 def parse(text):
     rows=[]
@@ -48,10 +58,10 @@ def main():
     glyph_ok=(all(token in descriptor for token in ('id = "east"','label = "A"',
               'id = "south"','label = "B"','id = "guide"'))
               and 'id = "guide"\nkind = "button"\nev_type = "EV_KEY"' in descriptor)
-    print(f"{'PASS' if glyph_ok else 'FAIL'} tsp-east-A-south-B-unlabeled-guide-prompts")
+    print(f"{'PASS' if glyph_ok else 'FAIL'} tsp-east-A-south-B-unlabeled-guide-contract-pinned")
     failed |= not glyph_ok
     with tempfile.TemporaryDirectory(prefix="shell-suite-") as work:
-        hashes=[]
+        hashes=[]; content=[]
         for n in (1,2):
             frame=os.path.join(work,f"frame-{n}.bin")
             with open(frame,"wb") as f: f.truncate(1280*720*4)
@@ -59,7 +69,13 @@ def main():
                 PF_FB_WIDTH="1280",PF_FB_HEIGHT="720",PF_FB_STRIDE=str(1280*4))
             run=subprocess.run([a.harness,a.launcher,"--sim-frame"],env=env,capture_output=True)
             if run.returncode: failed=True
-            hashes.append(hashlib.sha256(open(frame,"rb").read()).hexdigest())
+            with open(frame,"rb") as f: frame_bytes=f.read()
+            hashes.append(hashlib.sha256(frame_bytes).hexdigest())
+            content.append(frame_content(frame_bytes))
+        ok=all(result[0] for result in content)
+        fraction=min(result[1] for result in content)
+        print(f"{'PASS' if ok else 'FAIL'} frame-content-nonblank-composed foreground_fraction={fraction:.6f} minimum={MIN_FOREGROUND_FRACTION:.6f}")
+        failed |= not ok
         ok=hashes[0]==hashes[1]
         print(f"{'PASS' if ok else 'FAIL'} deterministic-frame-hash sha256={hashes[0]}")
         failed |= not ok
