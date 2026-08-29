@@ -31,6 +31,10 @@ case "$cmd" in
   check-sensor)  exec python3 "$SIM/sensor/check-sensor.py"  "$@" ;;
   check-skin)    exec python3 "$SIM/skin/check-skin.py"      "$@" ;;
   check-generic) exec python3 "$SIM/generic/check-generic.py" "$@" ;;
+  check-shell) exec python3 "$SIM/shell/check-shell.py" --authority "$SESSION_AUTHORITY_ARM64" \
+    --launcher "$SHELL_ARM64" --qemu-tsp "$QEMU_TSP" --rootfs "$ROOTFS" \
+    --harness "$SIM/harness/run-in-harness.sh" --platform "$PLATFORM" \
+    --skin-render "$SKIN_RENDER" "$@" ;;
   run-app)
     dev="${1:?usage: pf-sim run-app <device> <arm64-binary> [--shot path] [--window] [-- app-args]}"; app="${2:?missing arm64 binary}"; shift 2
     exec python3 "$SIM/generic/generic_capture.py" --device "$dev" --platform "$PLATFORM" \
@@ -78,6 +82,6 @@ case "$cmd" in
   shell)         exec /bin/bash "$@" ;;
   *)
     echo "pf-sim: unknown command '$cmd'" >&2
-    echo "usage: pf-sim {check-control|check-sensor|check-skin|check-generic|run-app|check-broker-stub|selftest-region-guard|selftest-skin-optional|check-synth-selftest|matrix|window|window-selftest|shell} [args...]" >&2
+    echo "usage: pf-sim {check-control|check-sensor|check-skin|check-generic|check-shell|run-app|check-broker-stub|selftest-region-guard|selftest-skin-optional|check-synth-selftest|matrix|window|window-selftest|shell} [args...]" >&2
     exit 2 ;;
 esac

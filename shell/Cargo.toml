@@ -1,0 +1,9 @@
+[package]
+name = "pf-sim-session-authority"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+pf-ports = { path = "/src/runtime/crates/pf-ports" }
+pf-session-authority = { path = "/src/runtime/crates/pf-session-authority" }
+
