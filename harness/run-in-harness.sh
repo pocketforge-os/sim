@@ -12,6 +12,19 @@ QEMU_TSP="${QEMU_TSP:?set QEMU_TSP (baked in the pocketforge-sim image; see dock
 ROOTFS="${ROOTFS:?set ROOTFS=/path/to/rootfs-arm64}"
 BIN="${1:?usage: run-in-harness.sh <arm64-binary> [args...]}"; shift || true
 
+die() { printf '%s\n' "sim: error: $*" >&2; exit 1; }
+
+# --sim-frame opens a framebuffer directly. Catch a missing attachment here, before the launcher
+# can reduce the problem to a bare open(2) error. FB0_BIND is the qemu harness attachment. Neither
+# a host /dev/fb0 nor an arbitrary parent-side PF_FB0 path is inherited through bwrap's private
+# --dev/rootfs, so the simulator must explicitly attach the framebuffer at /dev/fb0.
+sim_frame=0
+for arg in "$@"; do [ "$arg" = "--sim-frame" ] && sim_frame=1; done
+if [ "$sim_frame" = "1" ] && [ -z "${FB0_BIND:-}" ]; then
+  die "--sim-frame has no framebuffer attached at /dev/fb0.
+    Fix: run through './sim run-app ... -- --sim-frame', or set FB0_BIND to a writable framebuffer file."
+fi
+
 # Optional WRITABLE artifact egress: OUT_BIND=<hostdir> exposes it at /out so the headless
 # app can write a framebuffer dump (tsp-an4.4) the host then reads. Used by .5/E7 too.
 EXTRA=()
