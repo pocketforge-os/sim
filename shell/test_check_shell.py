@@ -27,12 +27,11 @@ class FrameContentTest(unittest.TestCase):
 
 
 class SimFramePreflightTest(unittest.TestCase):
-    def test_missing_framebuffer_has_actionable_error(self):
+    def test_parent_pf_fb0_does_not_bypass_actionable_error(self):
         harness = MODULE_PATH.parent.parent / "harness" / "run-in-harness.sh"
         env = os.environ.copy()
-        env.update(QEMU_TSP="unused", ROOTFS="unused")
+        env.update(QEMU_TSP="unused", ROOTFS="unused", PF_FB0="/parent/not-bind-mounted")
         env.pop("FB0_BIND", None)
-        env.pop("PF_FB0", None)
         run = subprocess.run(
             [harness, "unused", "--theme", "dark", "--sim-frame"],
             env=env,
@@ -42,7 +41,8 @@ class SimFramePreflightTest(unittest.TestCase):
         self.assertNotEqual(run.returncode, 0)
         self.assertIn("sim: error:", run.stderr)
         self.assertIn("/dev/fb0", run.stderr)
-        self.assertIn("PF_FB0", run.stderr)
+        self.assertIn("FB0_BIND", run.stderr)
+        self.assertNotIn("PF_FB0", run.stderr)
         self.assertIn("./sim run-app", run.stderr)
 
 
