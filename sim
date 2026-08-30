@@ -109,18 +109,18 @@ run_suite() { # <suite> <devices...>
   step "pf-sim check-${suite} $*  ${DIM}(native x86 == arm64-under-qemu-tsp, byte-identical)${RST}"
   docker run --rm "${_net[@]}" "${SIM_CAPS[@]}" "$IMAGE" "check-${suite}" "$@"
 }
-# Device-free pre-passes: negative controls that assert the descriptor-shape guards can still FAIL.
-# They run INSIDE run_suites_over (not as a separate workflow step) so `./sim check` — which IS the
-# gate — covers them with no sim-gate.yml edit, and so a developer sees the same verdict locally.
-# They take no device args and are cheap (~1s, no qemu/uinput). A guard nothing invokes is a
-# check-shaped absence that still reads as coverage, which is the failure class these exist to kill.
-run_selftests() {
+# Device-free blocking pre-passes. They run exactly once per `./sim check`, before any posture rows,
+# so the developer command and CI gate cannot drift and advisory rows do not duplicate their cost.
+# The shell suite exercises the image's pinned, freshly-built pf-shell under qemu-tsp, including a
+# real --sim-frame render/composite assertion; the descriptor negative control remains cheap (~1s).
+run_blocking_prepasses() {
   step "pf-sim selftest-skin-optional  ${DIM}(device-free: optional descriptor fields, tsp-bu5e)${RST}"
   docker run --rm "${_net[@]}" "$IMAGE" selftest-skin-optional
+  step "pf-sim check-shell  ${DIM}(F12: pinned pf-shell + modeled lifecycle + --sim-frame composite)${RST}"
+  docker run --rm "${_net[@]}" "${SIM_CAPS[@]}" "$IMAGE" check-shell
 }
 run_suites_over() { # <devices...> — control+sensor+skin over the devices; return rc (no build/validate)
   local suite rc=0
-  run_selftests || rc=$?
   for suite in control sensor skin generic; do
     run_suite "$suite" "$@" || rc=$?
   done
@@ -129,6 +129,7 @@ run_suites_over() { # <devices...> — control+sensor+skin over the devices; ret
 run_headless() { # <devices...> — build+validate, run the full matrix HARD (failure => nonzero)
   need_docker; need_uinput; build_base; validate_devices "$IMAGE" "$@"
   local rc=0
+  run_blocking_prepasses || rc=$?
   run_suites_over "$@" || rc=$?
   if [ "$rc" -eq 0 ]; then printf '%s\n' "${GRN}${BOLD}✓ ALL SUITES PASS${RST} (control + sensor + skin) for: $*" >&2
   else printf '%s\n' "${RED}${BOLD}✗ suite failure${RST} (exit ${rc}) — see the FAIL lines above" >&2; fi
@@ -190,6 +191,7 @@ cmd_check() { # the full CI matrix, exactly as sim-gate.yml runs it (data-driven
     printf '%s\n' "  ${BOLD}advisory${RST} (a failure REPORTS): ${advisory:-${DIM}(none)${RST}}" >&2
     printf '%s\n' "  ${DIM}excluded (not run): ${excluded:-(none)}${RST}" >&2
     [ -n "$blocking$advisory" ] || die "the CI matrix derived ZERO runnable devices — check platform ci-matrix.toml (pf caps matrix validate)."
+    run_blocking_prepasses || rc=$?
     if [ -n "$blocking" ]; then
       validate_devices "$IMAGE" $blocking
       run_suites_over $blocking || rc=$?
