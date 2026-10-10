@@ -146,11 +146,22 @@ The generated PNGs and the glb are **checked in** on purpose: the target app, th
 must not need OpenSCAD at runtime. Rendering expects the `Liberation Sans` and `Ubuntu Sans`
 font families (the latter is the photographed extra-bold-italic enclosure silkscreen).
 
-`export_gltf.py --write` refuses a model whose `CONTROL_IDS` differ from the descriptor's
-`[skin.parts]`, so on a brand-new device write the descriptor's `[skin.parts]` keys
-([Step 4](#step-4--the-descriptor-devicesidcapabilitiestoml)) before the first regen, then copy
-the rects `render.py --write` derived (it prints `derived_rects=` and records them in
-`model-render.json`) into `[skin.parts]`. The two must match exactly; the drift gate asserts it.
+**A brand-new device bootstraps in two runs.** `export_gltf.py --write` refuses a model whose
+`CONTROL_IDS` differ from the descriptor's `[skin.parts]` keys, so write the descriptor with those
+keys first ([Step 4](#step-4--the-descriptor-devicesidcapabilitiestoml); any rect values). The
+first `regen.sh` then renders, exports and stops at its last step, the drift gate, because the
+descriptor's rects are not the rendered ones yet. With one rect off by 26 px on the a133:
+
+```text
+skin_drift=fail
+  - a133: btn_east rect drift: descriptor={'x': 1300, 'y': 190, 'w': 57, 'h': 55} model-render.json={'h': 55, 'w': 57, 'x': 1326, 'y': 190}
+```
+
+Copy the rects and `display_rect` that `render.py --write` recorded in `model-render.json` (it
+also prints them as `derived_rects=`) into `[skin.parts]` and run `regen.sh` again; `render.py`
+never edits the descriptor. A **model-only** package (a `MODELS` row with descriptor `None`, like
+the Brick) has no descriptor and no 2D skin: `regen.sh` skips `render.py`, exports the glb,
+renders the six views and runs the gates in one run.
 
 ### Verify locally with `render.py --check`
 
@@ -498,7 +509,7 @@ further edits:
 $EDITOR device-models/trimui-smart-pro-s/trimui-smart-pro-s.scad   # 1-2. semantic 3D model from measurements (or a shared chassis)
 $EDITOR device-models/export_gltf.py                               # 2.   new package only: one MODELS row
 $EDITOR devices/a523/capabilities.toml                             # 4.   descriptor: inputs, sensors, [skin.parts], v2 tables
-device-models/regen.sh trimui-smart-pro-s                          # 3.   skin, glb, six views, then the drift gates
+device-models/regen.sh trimui-smart-pro-s                          # 3.   skin, glb, six views, then the drift gates (new device: copy rects, run again)
 python3 device-models/trimui-smart-pro-s/render.py --check         #      full-fidelity local verify (host-jitter caveat above)
 $EDITOR devices/catalog.toml                                       # 5.   catalog row
 $EDITOR ci-matrix.toml                                             # 5.   posture row (or leave it to auto-join as advisory)
