@@ -157,10 +157,12 @@ skin_drift=fail
   - a133: btn_east rect drift: descriptor={'x': 1300, 'y': 190, 'w': 57, 'h': 55} model-render.json={'h': 55, 'w': 57, 'x': 1326, 'y': 190}
 ```
 
-Copy the rects and `display_rect` that `render.py --write` recorded in `model-render.json` (it
-also prints them as `derived_rects=`) into `[skin.parts]` and run `regen.sh` again; `render.py`
-never edits the descriptor. A **model-only** package (a `MODELS` row with descriptor `None`, like
-the Brick) has no descriptor and no 2D skin: `regen.sh` skips `render.py`, exports the glb,
+Copy what `render.py --write` recorded in `model-render.json` into the descriptor: the control
+rects (printed as `derived_rects=`) into `[skin.parts]`, and `display_rect` (printed as
+`display_rect=`) into the primary screen's `display_rect` (`screens[0]`); for a skin with extra
+views, each `view_rects[<view>]=` into `[skin.views.<view>.parts]`. Then run `regen.sh` again;
+`render.py` never edits the descriptor. A **model-only** package (a `MODELS` row with descriptor
+`None`, like the Brick) has no descriptor and no 2D skin: `regen.sh` skips `render.py`, exports the glb,
 renders the six views and runs the gates in one run.
 
 ### Verify locally with `render.py --check`
