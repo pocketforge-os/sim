@@ -28,13 +28,20 @@ consistency chain:
  skins/<id>/body.png                ← neutral device art        │  consumed by the sim GUI and
  skins/<id>/body_lit.png            ← pairwise-safe lit atlas    │  check-skin; the [skin.parts]
  skins/<id>/model-render.json       ← recorded hashes + rects    │  rects index crops of body_lit
+        │  export_gltf.py --write, then render_glb_views.py
+        ▼
+ skins/<id>/model.glb               ← the 3D model the simulator loads (pfvd, via platform.pin)
+ skins/<id>/model-glb.json          ← recorded glb/.scad/exporter hashes + the six views' hashes
+ skins/<id>/views/*.png             ← six orthographic review renders of the glb (owner review)
         │
  ci-matrix.toml [devices]           ← THE POSTURE ROW (blocking | advisory | excluded)
 ```
 
-The descriptor's `[skin.parts]` rectangles, the rendered atlas, and the `model-render.json`
-metadata **must stay in lockstep** — a render-free CI gate (`skin-drift`) enforces exactly that
-(see [What auto-joins in CI](#what-auto-joins-in-ci)).
+The descriptor's `[skin.parts]` rectangles, the rendered atlas, the `model-render.json`
+metadata, the glb and its review views **must stay in lockstep** — render-free CI gates
+(`skin-drift`, `skin-drift-glb`) enforce exactly that (see
+[After editing a `.scad`](#after-editing-a-scad-regensh) and
+[What auto-joins in CI](#what-auto-joins-in-ci)).
 
 ## Step 1 — the descriptor (`devices/<id>/capabilities.toml`)
 
@@ -124,6 +131,34 @@ skin-drift gate — run it whenever you touch a model or its skin.
 > `skin-drift` gate (below) is what runs in CI. Run `--check` on a host with the right fonts and
 > expect that pixel jitter is environmental, not a real drift — until `tsp-vevy` closes that gap.
 
+## After editing a `.scad`: `regen.sh`
+
+**After editing a `.scad`, run `device-models/regen.sh <slug>` and commit everything it changed;
+CI refuses a stale derivative.**
+
+```bash
+device-models/regen.sh trimui-smart-pro-s     # from the platform repo root
+```
+
+[`regen.sh`](https://github.com/pocketforge-os/platform/blob/main/device-models/regen.sh) runs
+`render.py --write` (and `--write-views`), `export_gltf.py --model <slug> --write`,
+`render_glb_views.py skins/<id>/model.glb`, then `check-skin-drift.py` and `export_gltf.py --check`,
+and prints every file it changed. It needs OpenSCAD, numpy and Pillow, and refuses to start
+without them. A second run reports `changed=0`. Every derived file and the gate that refuses it
+stale (both jobs are in platform's `.github/workflows/skin-drift.yml`):
+
+| Derived file | Written by | Gate (CI job) |
+|---|---|---|
+| `skins/<id>/body.png`, `body_lit.png` (+ `body_<view>.png`, `body_lit_<view>.png`) | `render.py --write` / `--write-views` | `check-skin-drift.py` (`skin-drift`): hashes in `model-render.json` |
+| `skins/<id>/model-render.json` rects + `display_rect` | `render.py --write` | `check-skin-drift.py` (`skin-drift`): equal to the descriptor `[skin.parts]` |
+| `skins/<id>/model.glb` + `model-glb.json` | `export_gltf.py --write` | `check-skin-drift.py` (`skin-drift`): hashes, glb nodes == `CONTROL_IDS` == `[skin.parts]`; `export_gltf.py --check` + Khronos validator (`skin-drift-glb`) |
+| `skins/<id>/views/{front,back,left,right,top,bottom}.png` | `render_glb_views.py` | `check-skin-drift.py` (`skin-drift`) and `--views-only` (`skin-drift-glb`): hashes in `model-glb.json["views"]`, recorded against the committed glb |
+
+pfvd pins platform, so a model fix reaches pfvd through a `platform.pin` bump (a one-line PR),
+and the coordinator refreshes the pfvd Model review artifact from the committed
+`skins/<id>/views/*.png`. Details:
+[`device-models/README.md`](https://github.com/pocketforge-os/platform/blob/main/device-models/README.md#after-editing-a-scad-regensh).
+
 ## Step 4 — the posture row (`ci-matrix.toml`)
 
 [`platform/ci-matrix.toml`](https://github.com/pocketforge-os/platform/blob/main/ci-matrix.toml) is
@@ -189,7 +224,7 @@ further edits:
 # in a platform worktree/branch:
 $EDITOR devices/a523/capabilities.toml                         # 1. descriptor (inputs, sensors, caps, [skin.parts])
 $EDITOR device-models/trimui-smart-pro-s/trimui-smart-pro-s.scad  # 2. semantic 3D model (or reuse a shared chassis)
-python3 device-models/trimui-smart-pro-s/render.py --write     # 3a. render body/body_lit/model-render.json
+device-models/regen.sh trimui-smart-pro-s                      # 3a. render skin, export glb, render views, run the gates
 python3 device-models/trimui-smart-pro-s/render.py --check      # 3b. full-fidelity local verify (host-jitter caveat above)
 $EDITOR ci-matrix.toml                                          # 4. posture row (or leave it to auto-join as advisory)
 python3 device-models/check-skin-drift.py                       #     render-free drift check, exactly as CI runs it
@@ -208,8 +243,10 @@ No application code. No test code. No workflow edit. **Add a device = add data.*
 | Descriptor | `platform/devices/<id>/capabilities.toml` |
 | Semantic 3D model | `platform/device-models/<model>/<model>.scad` + `render.py` |
 | Rendered skin | `platform/skins/<id>/{body,body_lit}.png` + `model-render.json` |
+| 3D model + review views | `platform/skins/<id>/model.glb` + `model-glb.json` + `views/*.png` |
+| Regenerate after a `.scad` edit | `platform/device-models/regen.sh <slug>` |
 | Posture row | `platform/ci-matrix.toml` |
-| Drift gate | `platform/device-models/check-skin-drift.py` → `.github/workflows/skin-drift.yml` |
+| Drift gate | `platform/device-models/check-skin-drift.py` → `.github/workflows/skin-drift.yml` (`skin-drift`, `skin-drift-glb`) |
 | Descriptor gate | `platform/.github/workflows/sim-descriptor-gate.yml` |
 | Sim suites + CLI | `sim/{control,sensor,skin}/` · `sim/sim` · `sim/.github/workflows/sim-gate.yml` |
 | hwprobe smoke gate | `pf-hwprobe/.github/workflows/hwprobe-smoke.yml` |
