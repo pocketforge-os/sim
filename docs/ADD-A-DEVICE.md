@@ -128,9 +128,10 @@ regen=pass slug=trimui-smart-pro skin=a133 changed=0 (outputs already current)
 
 The first run on a fresh checkout takes a few minutes (OpenSCAD runs once per part; later runs
 reuse `device-models/.cache/`). If you did **not** edit the `.scad` and a run still reports
-changed files, check `git diff`: `trimui-smart-pro/render.py` keeps a committed PNG that differs
+changed files, check `git diff`: every model's `render.py` keeps a committed PNG that differs
 from a fresh render only by OpenSCAD's per-process tie jitter (at most 128 pixels, same rects;
-platform#312; the TG5050's `render.py` does not yet), so a changed a133 PNG means another OpenSCAD,
+platform#312; the TG5050 and Brick copies also keep a committed rect a tie pixel moved by one edge
+pixel, platform#313), so a changed skin PNG means another OpenSCAD,
 GL driver or font set (bead `tsp-vevy`). Commit only changes that follow from your edit.
 
 Every derived file and the gate that refuses it stale (both jobs are in platform's
