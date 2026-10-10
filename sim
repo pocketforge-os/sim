@@ -239,23 +239,61 @@ cmd_gui() {
   fi
 }
 
-# The in-container path a caller's --fb0-path file is bind-mounted at. generic_capture.py hands it
-# to the harness as FB0_BIND, so bwrap binds it at /dev/fb0 (docs/FB0-SIDECAR.md).
+# The in-container paths a caller's --fb0-path / --fb0-hdr-path files are bind-mounted at.
+# generic_capture.py hands them to the harness as FB0_BIND / FB0_HDR_BIND, so bwrap binds them at
+# /dev/fb0 and /dev/fb0.hdr (docs/FB0-SIDECAR.md).
 RUN_APP_FB0=/run/pfvd/fb0
+RUN_APP_FB0_HDR=/run/pfvd/fb0.hdr
+# Where the image keeps its own arm64 apps (`bundled:<name>` -> $BUNDLED_DIR/<name>.arm64).
+BUNDLED_DIR=/opt/pf/apps
+
+# check_shared_file <flag> <host-path> <fix-hint>: one stat of the resolved path gives type, owner,
+# mode and dev:ino from the same inode; dies unless the sandboxed app can map it read+write. Sets
+# shared_real and shared_ident. docker -v binds by path, so the dev:ino goes to generic_capture,
+# which refuses a file swapped in before the bind (docs/FB0-SIDECAR.md "Check, then bind").
+check_shared_file() {
+  local flag="$1" path="$2" hint="$3" uid="" gid="" mode="" ident="" type="" class bits real
+  real="$(readlink -f -- "$path")" &&
+    read -r uid gid mode ident type < <(stat -L -c '%u %g %a %d:%i %F' -- "$real" 2>/dev/null) || true
+  case "$type" in "regular file"|"regular empty file") ;; *)
+    die "$flag must name an existing regular file (got: $path)
+    Fix: create it first, e.g. $hint" ;; esac
+  # The sandboxed app is uid 0 / gid 0 with every capability dropped by bwrap: no DAC override,
+  # so exactly one permission class applies (owner if root-owned, else group if gid 0, else other).
+  if [ "$uid" = "0" ]; then class=u; bits=$(( (8#$mode >> 6) & 6 ))
+  elif [ "$gid" = "0" ]; then class=g; bits=$(( (8#$mode >> 3) & 6 ))
+  else class=o; bits=$(( 8#$mode & 6 )); fi
+  [ "$bits" -eq 6 ] || die "$flag $real (owner $uid:$gid, mode $mode) is not readable+writable by the sandboxed app (uid 0 without capabilities).
+    Fix: chmod $class+rw $real   (keep it inside a 0700 directory such as /run/user/\$(id -u)/pfvd)"
+  shared_real="$real"; shared_ident="$ident"
+}
+
 cmd_run_app() {
-  [ $# -ge 2 ] || die "usage: sim run-app <device> <arm64-binary> [--shot host.ppm] [--window] [--fb0-path file] [--no-synth --input-device /dev/input/eventN ...] [--print-cmd] [-- app-args]"
-  local device="$1" app; app="$(readlink -f "$2")"; shift 2
-  [ -f "$app" ] || die "arm64 binary not found: $app"
+  [ $# -ge 2 ] || die "usage: sim run-app <device> <arm64-binary|bundled:<name>> [--shot host.ppm] [--window] [--fb0-path file [--fb0-hdr-path file]] [--no-frame] [--no-synth --input-device /dev/input/eventN ...] [--print-cmd] [-- app-args]"
+  local device="$1" app spec="$2"; shift 2
   local outdir; outdir="$(pwd)/sim-capture"
-  local args=(--frame /out/frame.ppm); local docker_args=(-v "$app:/run-app:ro" -v "$outdir:/out")
-  local fb0_path="" no_synth=0 print_cmd=0 window=0 inputs=() arg
+  local args=(--frame /out/frame.ppm); local docker_args=()
+  if [[ "$spec" == bundled:* ]]; then
+    # An app baked into the image: nothing from the host is bound; the entrypoint names a missing one.
+    [[ "${spec#bundled:}" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]] || die "bundled:<name> takes an app name the image ships, e.g. bundled:fb-anim (got: $spec)"
+    app="$BUNDLED_DIR/${spec#bundled:}.arm64"
+  else
+    app="$(readlink -f "$spec")"
+    [ -f "$app" ] || die "arm64 binary not found: $app"
+    docker_args+=(-v "$app:/run-app:ro"); app=/run-app
+  fi
+  docker_args+=(-v "$outdir:/out")
+  local fb0_path="" fb0_hdr_path="" no_frame=0 no_synth=0 print_cmd=0 window=0 shot=0 inputs=() arg
   while [ $# -gt 0 ]; do
     arg="$1"; shift
     case "$arg" in
-      --shot) [ $# -gt 0 ] || die "--shot needs a host path"; args+=(--shot "/out/$(basename "$1")"); shift ;;
+      --shot) [ $# -gt 0 ] || die "--shot needs a host path"; shot=1; args+=(--shot "/out/$(basename "$1")"); shift ;;
       --window) window=1; args+=(--window) ;;
       --fb0-path) [ $# -gt 0 ] || die "--fb0-path needs a host file (create it first, e.g. truncate -s \$((W*H*4)) <file>)"
         fb0_path="$1"; shift ;;
+      --fb0-hdr-path) [ $# -gt 0 ] || die "--fb0-hdr-path needs a host file (create it first, e.g. truncate -s 64 <file>)"
+        fb0_hdr_path="$1"; shift ;;
+      --no-frame) no_frame=1 ;;
       --no-synth) no_synth=1 ;;
       --input-device) [ $# -gt 0 ] || die "--input-device needs an evdev node path (/dev/input/eventN)"
         [[ "$1" =~ ^/dev/input/event[0-9]+$ ]] || die "--input-device takes a per-node path /dev/input/eventN (got: $1)"
@@ -268,6 +306,9 @@ cmd_run_app() {
   # Input: by default the container gets the uinput control node + the host /dev/input tree
   # (SIM_CAPS). --no-synth is the host-synthesised form (R5c F3): the caller created the uinput
   # device(s) and passes exactly their event nodes; the container never sees /dev/uinput.
+  # It also drops the major-13 cgroup wildcard and CAP_MKNOD: with both, a container could mknod
+  # and open ANY input node, including another session's. The per-node --device entries already
+  # allow exactly the nodes passed.
   local caps=("${SIM_CAPS[@]}")
   if [ "$no_synth" = "1" ]; then
     [ "${#inputs[@]}" -gt 0 ] || die "--no-synth needs at least one --input-device /dev/input/eventN (the node(s) you created on the host)"
@@ -276,42 +317,46 @@ cmd_run_app() {
     while [ "$i" -lt "${#SIM_CAPS[@]}" ]; do
       case "${SIM_CAPS[$i]}" in
         --device) [ "${SIM_CAPS[$((i+1))]}" = /dev/uinput ] && { i=$((i+2)); continue; } ;;
+        --device-cgroup-rule) i=$((i+2)); continue ;;
         -v) [ "${SIM_CAPS[$((i+1))]}" = /dev/input:/dev/input ] && { i=$((i+2)); continue; } ;;
       esac
       caps+=("${SIM_CAPS[$i]}"); i=$((i+1))
     done
+    caps+=(--cap-drop MKNOD)
     for arg in "${inputs[@]}"; do caps+=(--device "$arg"); done
   elif [ "${#inputs[@]}" -gt 0 ]; then
     die "--input-device needs --no-synth (without it the container synthesises its own device through /dev/uinput)"
   fi
+  if [ "$no_frame" = "1" ]; then
+    [ "$shot$window" = "00" ] || die "--no-frame writes no frame.ppm; --shot and --window composite it (drop one)"
+    args+=(--no-frame)
+  fi
   # Screen: --fb0-path replaces generic_capture's private buffer with a caller-owned host file.
   # The caller sizes it; it is never created or truncated here.
+  local shared_real="" shared_ident=""
+  [ -z "$fb0_hdr_path" ] || [ -n "$fb0_path" ] || die "--fb0-hdr-path needs --fb0-path (the header describes your buffer)"
   if [ -n "$fb0_path" ]; then
-    # One stat of the resolved path gives type, owner, mode and dev:ino from the same inode. docker
-    # -v binds by path, so the dev:ino goes to generic_capture as --fb0-ident and a file swapped in
-    # before the bind is refused before the app starts (docs/FB0-SIDECAR.md "Check, then bind").
-    local fb0_uid="" fb0_gid="" fb0_mode="" fb0_ident="" fb0_type="" fb0_class fb0_bits fb0_real
-    fb0_real="$(readlink -f -- "$fb0_path")" &&
-      read -r fb0_uid fb0_gid fb0_mode fb0_ident fb0_type < <(stat -L -c '%u %g %a %d:%i %F' -- "$fb0_real" 2>/dev/null) || true
-    case "$fb0_type" in "regular file"|"regular empty file") ;; *)
-      die "--fb0-path must name an existing regular file (got: $fb0_path)
-    Fix: create it first, e.g. truncate -s \$((W*H*4)) $fb0_path" ;; esac
-    fb0_path="$fb0_real"
-    # The sandboxed app is uid 0 / gid 0 with every capability dropped by bwrap: no DAC override,
-    # so exactly one permission class applies (owner if root-owned, else group if gid 0, else other).
-    if [ "$fb0_uid" = "0" ]; then fb0_class=u; fb0_bits=$(( (8#$fb0_mode >> 6) & 6 ))
-    elif [ "$fb0_gid" = "0" ]; then fb0_class=g; fb0_bits=$(( (8#$fb0_mode >> 3) & 6 ))
-    else fb0_class=o; fb0_bits=$(( 8#$fb0_mode & 6 )); fi
-    [ "$fb0_bits" -eq 6 ] || die "--fb0-path $fb0_path (owner $fb0_uid:$fb0_gid, mode $fb0_mode) is not readable+writable by the sandboxed app (uid 0 without capabilities).
-    Fix: chmod $fb0_class+rw $fb0_path   (keep it inside a 0700 directory such as /run/user/\$(id -u)/pfvd)"
+    check_shared_file --fb0-path "$fb0_path" "truncate -s \$((W*H*4)) $fb0_path"
+    fb0_path="$shared_real"
     docker_args+=(-v "$fb0_path:$RUN_APP_FB0")
-    args=(--fb0 "$RUN_APP_FB0" --fb0-ident "$fb0_ident" "${args[@]}")
+    local hdr_args=() fb0_ident="$shared_ident"
+    if [ -n "$fb0_hdr_path" ]; then
+      # A second file, so fb0 stays a plain buffer: the in-container producer publishes the PFB0
+      # seqlock header here and the caller reads it beside fb0 (docs/FB0-SIDECAR.md).
+      check_shared_file --fb0-hdr-path "$fb0_hdr_path" "truncate -s 64 $fb0_hdr_path"
+      [ "$shared_ident" != "$fb0_ident" ] || die "--fb0-hdr-path $shared_real is the same file as --fb0-path: the header would overwrite pixels"
+      docker_args+=(-v "$shared_real:$RUN_APP_FB0_HDR")
+      hdr_args=(--fb0-hdr "$RUN_APP_FB0_HDR" --fb0-hdr-ident "$shared_ident")
+    fi
+    args=(--fb0 "$RUN_APP_FB0" --fb0-ident "$fb0_ident" "${hdr_args[@]}" "${args[@]}")
   fi
   if [ "$window" = "1" ] && [ "$print_cmd" = "0" ]; then
     [ -n "${DISPLAY:-}" ] && xdpyinfo_ok || die "--window needs a reachable X display; use --shot for headless capture"
   fi
   [ "$window" = "1" ] && docker_args+=(-e DISPLAY="${DISPLAY:-}" -v /tmp/.X11-unix:/tmp/.X11-unix)
-  local cmd=(docker run --rm "${caps[@]}" "${docker_args[@]}" "$DEMO_IMAGE" run-app "$device" /run-app "${args[@]}")
+  # --init: the capture supervisor would be PID 1, which ignores an unhandled SIGTERM, so `docker
+  # stop` (and an app such as fb-anim that runs until SIGTERM) would wait out the stop timeout.
+  local cmd=(docker run --rm --init "${caps[@]}" "${docker_args[@]}" "$DEMO_IMAGE" run-app "$device" "$app" "${args[@]}")
   if [ "$print_cmd" = "1" ]; then
     # Dry run: the exact argument list, shell-quoted on one line. No docker, no build, no mkdir.
     printf '%q' "${cmd[0]}"; printf ' %q' "${cmd[@]:1}"; printf '\n'
@@ -403,12 +448,14 @@ ${BOLD}COMMANDS${RST}
   ${GRN}gui${RST} [device]       Open the clickable .scad-rendered skin — press the bezel and watch
                      the control light up. Live X11 window on a display host; falls back
                      to an autonomous Xvfb self-test when headless. ${DIM}default: a133${RST}
-  ${GRN}run-app${RST} <device> <arm64-bin> [--shot file.ppm|--window] [-- args…]
+  ${GRN}run-app${RST} <device> <arm64-bin|bundled:name> [--shot file.ppm|--window] [-- args…]
                      Attach a generic /dev/fb0, run the binary under qemu-tsp, and composite its
                      pixels into the device skin. No app-specific snapshot protocol is required.
-                     --fb0-path FILE: bind your pre-sized host file at /dev/fb0. --no-synth
-                     --input-device /dev/input/eventN: pass only your nodes, no /dev/uinput.
-                     --print-cmd: print the docker run argv and exit.
+                     bundled:fb-anim runs the image's 60 Hz writer (also fb-pattern).
+                     --fb0-path FILE: bind your pre-sized host file at /dev/fb0 (and
+                     --fb0-hdr-path FILE: a 64-byte fb0.hdr beside it). --no-frame: no frame.ppm.
+                     --no-synth --input-device /dev/input/eventN: pass only your nodes, no
+                     /dev/uinput, no mknod. --print-cmd: print the docker run argv and exit.
   ${GRN}check${RST} [devices…]   The ${BOLD}full CI matrix${RST}, exactly as sim-gate.yml runs it. With no
                      args the device list + per-device posture (blocking/advisory/excluded) are
                      ${BOLD}data-driven${RST} from platform's ci-matrix.toml; naming devices runs just those,

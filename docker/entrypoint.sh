@@ -37,6 +37,13 @@ case "$cmd" in
     --skin-render "$SKIN_RENDER" "$@" ;;
   run-app)
     dev="${1:?usage: pf-sim run-app <device> <arm64-binary> [--shot path] [--window] [-- app-args]}"; app="${2:?missing arm64 binary}"; shift 2
+    # A bundled app (`./sim run-app <device> bundled:<name>`) is a path in this image; name a
+    # missing one and what the image ships, before bwrap reduces it to "Can't find source path".
+    if [ ! -f "$app" ]; then
+      shipped=(); for f in /opt/pf/apps/*.arm64; do [ -f "$f" ] && shipped+=("$(basename "$f" .arm64)"); done
+      echo "pf-sim run-app: no app at $app (bundled apps: ${shipped[*]:-none})" >&2
+      exit 2
+    fi
     exec python3 "$SIM/generic/generic_capture.py" --device "$dev" --platform "$PLATFORM" \
       --app "$app" --launcher qemu --qemu-tsp "$QEMU_TSP" --rootfs "$ROOTFS" \
       --harness "$SIM/harness/run-in-harness.sh" --skin-render "$SKIN_RENDER" \

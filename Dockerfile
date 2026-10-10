@@ -32,16 +32,12 @@ ARG SNAPSHOT_TIMESTAMP=20260720T000000Z
 ARG ROOTFS_PLATFORM=linux/arm64
 ARG QEMU_TSP_REPO=https://github.com/pocketforge-os/qemu-tsp.git
 ARG QEMU_TSP_COMMIT=329c754ad34e4b8062f2a941ab35383811df70bf
-# platform is PUBLIC (tsp-qc1.4) -> cloned directly at the pinned commit below (origin/main;
-# refreshed to main @ PR #76 in tsp-65jc.20 — the B4 data-driven fleet matrix: ci-matrix.toml +
-# caps.py matrix validation + the two-job sim-descriptor-gate. This cascade activates the a523=
-# advisory posture (the pinned platform now CARRIES ci-matrix.toml, so resolve_matrix() no longer
-# takes the fail-closed all-blocking fallback). 9ed8a2e1 is a linear ancestor; the delta is
-# ci-matrix.toml + CI/caps files ONLY — devices/a133+a523 descriptors UNCHANGED (SHAs below still
-# valid). Pin of record: docker/platform.pin (this ARG is the operative value ./sim build uses;
-# keep the two in sync).
+# platform is PUBLIC (tsp-qc1.4) -> cloned directly at the pinned commit below (origin/main @
+# PR #309, tsp-h5ed.46.28; 6cc66646 is a linear ancestor). What the bump changes and why is
+# recorded in docker/platform.pin. Pin of record: docker/platform.pin (this ARG is the operative
+# value ./sim build uses; keep the two in sync).
 ARG PLATFORM_REPO=https://github.com/pocketforge-os/platform.git
-ARG PLATFORM_COMMIT=6cc6664639bdcc361923c93387c323d581b181b4
+ARG PLATFORM_COMMIT=a86adf6fa4c5d8f4a97db50d0fa23035adfe816a
 ARG LAUNCHER_REPO=https://github.com/pocketforge-os/launcher.git
 ARG LAUNCHER_COMMIT=a254229f1f59ead79072f44a01c0f5b22db63b82
 ARG RUNTIME_REPO=https://github.com/pocketforge-os/runtime.git
@@ -139,6 +135,8 @@ RUN mkdir -p /apps && \
         /sdl3-render/arm64/lib/libSDL3.a -lm -ldl -lpthread -lrt && \
     gcc -O2 -o /apps/fb-pattern.x86 /src/generic/fb-pattern.c && \
     aarch64-linux-gnu-gcc -O2 -static -o /apps/fb-pattern.arm64 /src/generic/fb-pattern.c && \
+    gcc -O2 -o /apps/fb-anim.x86 /src/generic/fb-anim.c && \
+    aarch64-linux-gnu-gcc -O2 -static -o /apps/fb-anim.arm64 /src/generic/fb-anim.c && \
     gcc -O2 -I/sdl3-render/x86/include \
         -o /apps/skin-render /src/skin/skin-render.c \
         /sdl3-render/x86/lib/libSDL3.a -lm -ldl -lpthread -lrt && \
@@ -215,6 +213,8 @@ ENV QEMU_TSP=/opt/pf/qemu-tsp/qemu-aarch64 \
     APP_ARM64=/opt/pf/apps/hwprobe-lite.arm64 \
     PATTERN_X86=/opt/pf/apps/fb-pattern.x86 \
     PATTERN_ARM64=/opt/pf/apps/fb-pattern.arm64 \
+    FB_ANIM_X86=/opt/pf/apps/fb-anim.x86 \
+    FB_ANIM_ARM64=/opt/pf/apps/fb-anim.arm64 \
     SKIN_RENDER=/opt/pf/apps/skin-render \
     SHELL_ARM64=/opt/pf/apps/pf-shell.arm64 \
     SESSION_AUTHORITY_ARM64=/opt/pf/apps/pf-session-authority.arm64 \

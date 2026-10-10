@@ -11,7 +11,9 @@ launcher swaps to real crun later — the app binary is identical.
 - `build-rootfs.sh` — `docker export` an arm64 `debian:bookworm` filesystem to a directory.
 - `build-harness.sh` — rootfs + an arm64 SDL3 vendored into it (`/usr/local`).
 - `run-in-harness.sh <arm64-bin> [args]` — the launcher: `bwrap` binds the rootfs as `/`,
-  `--dev-bind /dev/input`, binds `qemu-tsp` + the binary, runs `qemu-tsp /app`.
+  `--dev-bind /dev/input`, binds `qemu-tsp` + the binary, runs `qemu-tsp /app`. A session needs
+  at least one input node: with no `/dev/input` it stops with a named error. `FB0_BIND` /
+  `FB0_HDR_BIND` attach `/dev/fb0` and its `fb0.hdr` sidecar (`docs/FB0-SIDECAR.md`).
 - `run-spike3-harness.sh` — proves the launcher reproduces the Path-A SPIKE-3 result.
 
 ## Result (2026-06-26, modelmaker)

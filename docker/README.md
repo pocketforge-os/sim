@@ -105,16 +105,20 @@ The cap set changes only for input; the bwrap knobs stay:
 |-------------------|------------------------------------------------------|
 | `--device /dev/uinput` | **dropped**: the host created the uinput device; the container cannot create more |
 | `-v /dev/input:/dev/input` | **replaced** by one `--device /dev/input/eventN` per node (repeat `--input-device`), so the container sees only this session's nodes and two sessions do not see each other's pads |
-| `--device-cgroup-rule "c 13:* rmw"`, `--cap-add SYS_ADMIN`, `apparmor=unconfined`, `seccomp=unconfined` | unchanged (bwrap still needs them; its `--dev-bind /dev/input` exposes exactly the passed nodes) |
+| `--device-cgroup-rule "c 13:* rmw"` | **dropped**, and `--cap-drop MKNOD` added: with the wildcard and docker's default `CAP_MKNOD` the container could `mknod` and open any input node, including another session's. The per-node `--device` entries already allow exactly the passed nodes (tsp-h5ed.46.28) |
+| `--cap-add SYS_ADMIN`, `apparmor=unconfined`, `seccomp=unconfined` | unchanged (bwrap still needs them; its `--dev-bind /dev/input` exposes exactly the passed nodes) |
 
 `--fb0-path <host-file>` adds `-v <host-file>:/run/pfvd/fb0`; inside the container
 `generic_capture.py --fb0 /run/pfvd/fb0 --fb0-ident <dev:ino>` checks that the bound file is the
 inode `./sim` checked, sets `FB0_BIND=/run/pfvd/fb0`, and the harness binds it at `/dev/fb0`. The caller creates and sizes the file and makes it `o+rw`, or `u+rw` if root-owned (the app
 is uid 0 with bwrap's capabilities dropped); it is never truncated. The present signal
 is polling; the optional `fb0.hdr` sidecar is specified in
-[`../docs/FB0-SIDECAR.md`](../docs/FB0-SIDECAR.md). `--input-device` without `--no-synth`, and
-`--no-synth` without an `--input-device`, are errors. `./sim check` and the CI gate keep the
-default cap set.
+[`../docs/FB0-SIDECAR.md`](../docs/FB0-SIDECAR.md); `--fb0-hdr-path <host-file>` binds a second file
+at `/run/pfvd/fb0.hdr` (the harness puts it at `/dev/fb0.hdr`) where an in-container producer can
+publish it. `--input-device` without `--no-synth`, and `--no-synth` without an `--input-device`,
+are errors. Every `run-app` adds `--init` so `docker stop` reaches the app. A container with no
+input node at all has no `/dev/input`, and the harness refuses it by name rather than letting
+bwrap fail on the missing bind source. `./sim check` and the CI gate keep the default cap set.
 
 ## Commands
 

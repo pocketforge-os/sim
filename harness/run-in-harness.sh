@@ -25,6 +25,15 @@ if [ "$sim_frame" = "1" ] && [ -z "${FB0_BIND:-}" ]; then
     Fix: run through './sim run-app ... -- --sim-frame', or set FB0_BIND to a writable framebuffer file."
 fi
 
+# The app's input devices: the host /dev/input tree (default run) or exactly the session's nodes
+# (`./sim run-app --no-synth`, where docker creates /dev/input/eventN per --device). A container
+# given no node has no /dev/input at all; name that instead of bwrap's "Can't find source path".
+# PF_INPUT_DIR overrides the bind source (the hermetic tests use it); the app always sees /dev/input.
+INPUT_DIR="${PF_INPUT_DIR:-/dev/input}"
+[ -d "$INPUT_DIR" ] || die "$INPUT_DIR is absent in this container: a session needs at least one input node.
+    Fix: run through './sim run-app' (default: synthesised input), pass the session's nodes with
+    './sim run-app --no-synth --input-device /dev/input/eventN', or give 'docker run' a '--device /dev/input/eventN'."
+
 # Optional WRITABLE artifact egress: OUT_BIND=<hostdir> exposes it at /out so the headless
 # app can write a framebuffer dump (tsp-an4.4) the host then reads. Used by .5/E7 too.
 EXTRA=()
@@ -40,6 +49,12 @@ if [ -n "${FB0_BIND:-}" ]; then
   EXTRA+=(--setenv PF_FB_HEIGHT "${PF_FB_HEIGHT:?set PF_FB_HEIGHT with FB0_BIND}")
   EXTRA+=(--setenv PF_FB_STRIDE "${PF_FB_STRIDE:-$((PF_FB_WIDTH * 4))}")
 fi
+# Optional fb0.hdr sidecar (docs/FB0-SIDECAR.md): a caller-owned 64-byte file beside fb0, where a
+# producer that knows when a frame is complete publishes the PFB0 seqlock header.
+if [ -n "${FB0_HDR_BIND:-}" ]; then
+  [ -n "${FB0_BIND:-}" ] || die "FB0_HDR_BIND needs FB0_BIND (the header describes the attached framebuffer)"
+  EXTRA+=(--bind "$FB0_HDR_BIND" /dev/fb0.hdr --setenv PF_FB0_HDR /dev/fb0.hdr)
+fi
 
 # Optional VIRTUAL IIO SENSOR (tsp-an4.7): IIO_BIND=<hostdir> exposes the descriptor-synthesized
 # IIO tree at the honest ABI path /sys/bus/iio/devices, so the app reads the injected accel/gyro
@@ -50,7 +65,7 @@ fi
 exec bwrap \
   --bind "$ROOTFS" / \
   --dev /dev \
-  --dev-bind /dev/input /dev/input \
+  --dev-bind "$INPUT_DIR" /dev/input \
   --ro-bind "$QEMU_TSP" /qemu-tsp \
   --ro-bind "$BIN" /app \
   "${EXTRA[@]}" \
