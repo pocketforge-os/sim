@@ -134,24 +134,42 @@ def app_pids(root):
     return out
 
 
-def forward_stop_signals(proc):
+class StopForwarder:
     """Pass SIGTERM/SIGINT on to the app, so it can exit cleanly and its status is reported.
 
     Under `docker run --init` (./sim run-app) only this supervisor receives `docker stop` or an
-    attached Ctrl-C; without forwarding it would die and take the app down uncleanly. Returns a
-    list that records the signals received, so the caller can end the run (the live window too).
+    attached Ctrl-C; without forwarding it would die and take the app down uncleanly. Install it
+    before starting the app. A stop can arrive before the app exists (while bwrap sets up the
+    sandbox), so ``poll``, called on every supervisor tick, passes it to app processes that have
+    appeared since; each process gets each signal once. ``stopped`` records the signals, so the
+    caller can end the run (the live window too).
     """
-    stopped = []
-    def forward(sig, _frame):
-        stopped.append(sig)
-        for pid in app_pids(proc.pid):
+    def __init__(self):
+        self.stopped, self.proc, self.sent = [], None, set()
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            signal.signal(sig, self._on_signal)
+
+    def _on_signal(self, sig, _frame):
+        self.stopped.append(sig)
+        self.sent = {s for s in self.sent if s[1] != sig}
+        self.poll()
+
+    def poll(self):
+        if self.proc is None or not self.stopped:
+            return
+        sig = self.stopped[-1]
+        for pid in app_pids(self.proc.pid):
+            if (pid, sig) in self.sent:
+                continue
+            self.sent.add((pid, sig))
             try:
                 os.kill(pid, sig)
             except ProcessLookupError:
                 pass
-    for sig in (signal.SIGTERM, signal.SIGINT):
-        signal.signal(sig, forward)
-    return stopped
+
+    def start(self, proc):
+        self.proc = proc
+        self.poll()
 
 
 def ppm_art(png, out):
@@ -218,14 +236,16 @@ def main():
         # Snapshots on cadence feed the live window, or are the only way out of a private buffer.
         # A caller-owned --fb0 is read by its owner, so without --window only the exit frame is kept.
         cadence = not a.no_frame and (a.window or a.fb0 is None)
+        stop = StopForwarder()
         proc = subprocess.Popen(cmd, env=env)
-        stopped = forward_stop_signals(proc)
+        stop.start(proc)
         window = None
         if a.window:
             if not a.skin_render: ap.error("--skin-render is required with --window")
             capture_raw(fb, a.frame, w, h)
             window = composite(skin, a.frame, None, a.skin_render, work)
         while proc.poll() is None:
+            stop.poll()
             # Snapshot on cadence, not on mtime: mmap writes need not update inode metadata.
             if cadence:
                 capture_raw(fb, a.frame, w, h)
@@ -241,7 +261,7 @@ def main():
             shot = composite(skin, a.frame, a.shot, a.skin_render, work)
             return shot.wait()
         if window:
-            if stopped and window.poll() is None:
+            if stop.stopped and window.poll() is None:
                 window.terminate(); window.wait()
                 return 0
             return window.wait()

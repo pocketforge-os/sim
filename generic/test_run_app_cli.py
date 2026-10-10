@@ -458,7 +458,8 @@ class SignalForwarding(unittest.TestCase):
         d = Path(self.tmp.name)
         self.mark = d / "mark"; self.ready = d / "ready"
         self.bwrap = d / "bwrap"
-        self.bwrap.write_text('#!/bin/sh\n"$@" &\nwait $!\n')
+        # SLOW_BWRAP=<file>: announce, then pause before starting the app (sandbox setup).
+        self.bwrap.write_text('#!/bin/sh\n[ -z "$SLOW_BWRAP" ] || { : > "$SLOW_BWRAP"; sleep 0.5; }\n"$@" &\nwait $!\n')
         self.harness = d / "harness"
         self.procs = []
         self.harness.write_text(f'#!/bin/sh\nexec {shlex.quote(str(self.bwrap))} "$@"\n')
@@ -482,21 +483,34 @@ class SignalForwarding(unittest.TestCase):
         app.chmod(0o755)
         return app
 
-    def capture(self, app, launcher, sig, window_secs=None):
+    # The capture, run in a child python with the platform lookup stubbed out.
+    RUN = ("import os, signal, subprocess, sys; sys.path[:0] = [%r]; import generic_capture as gc\n"
+           "gc.dimensions = lambda p, d: (None, (4, 2))\n"
+           "gc.composite = lambda *a: subprocess.Popen(['sleep', %r], stdin=subprocess.PIPE, text=True)\n"
+           "if %r:\n"
+           "    real = subprocess.Popen\n"
+           "    def early(*a, **k):\n"
+           "        p = real(*a, **k); os.kill(os.getpid(), signal.SIGTERM); return p\n"
+           "    gc.subprocess.Popen = early\n"
+           "sys.argv[1:] = %r; sys.exit(gc.main())")
+
+    def argv(self, app, launcher, frame):
+        return ["--device", "x", "--platform", "/p", "--launcher", launcher, "--app", str(app),
+                "--qemu-tsp", "/q", "--rootfs", "/r", "--harness", str(self.harness),
+                "--frame", str(Path(self.tmp.name) / "frame.ppm"), *frame, "--", "tag"]
+
+    def capture(self, app, launcher, sig, window_secs=None, early=False):
         for p in (self.mark, self.ready):
             if p.exists(): p.unlink()
         # --window: the skin window is a stand-in process that would stay open for window_secs.
-        run = ("import subprocess, sys; sys.path[:0] = [%r]; import generic_capture as gc\n"
-               "gc.dimensions = lambda p, d: (None, (4, 2))\n"
-               "gc.composite = lambda *a: subprocess.Popen(['sleep', %r], stdin=subprocess.PIPE, text=True)\n"
-               "sys.argv[1:] = %r; sys.exit(gc.main())")
+        # early: a SIGTERM arrives while the app is being started (before Popen returns).
         frame = ["--window", "--skin-render", "/s"] if window_secs else ["--no-frame"]
-        argv = ["--device", "x", "--platform", "/p", "--launcher", launcher, "--app", str(app),
-                "--qemu-tsp", "/q", "--rootfs", "/r", "--harness", str(self.harness),
-                "--frame", str(Path(self.tmp.name) / "frame.ppm"), *frame, "--", "tag"]
-        p = subprocess.Popen([sys.executable, "-c", run % (str(ROOT / "generic"), str(window_secs), argv)],
+        argv = self.argv(app, launcher, frame)
+        p = subprocess.Popen([sys.executable, "-c", self.RUN % (str(ROOT / "generic"), str(window_secs), early, argv)],
                              start_new_session=True)
         self.procs.append(p)
+        if early:  # the stop may end the app before it is up
+            return p.wait(timeout=10)
         end = time.monotonic() + 10
         while not self.ready.exists() and time.monotonic() < end:
             time.sleep(0.01)
@@ -516,6 +530,32 @@ class SignalForwarding(unittest.TestCase):
         self.assertEqual(self.capture(self.app(trap=True), "native", signal.SIGINT), 0)
         self.assertEqual(self.mark.read_text(), "tag\n")
         self.assertEqual(self.capture(self.app(trap=False), "native", signal.SIGINT), 130)
+
+    def test_a_stop_while_the_app_starts_is_not_lost(self):
+        # The signal lands before the supervisor has the app's pid: it must survive, then pass the
+        # stop on. The app may not have its handler yet, so it dies of TERM: 143, not the
+        # supervisor's own death (-15). Control: the same run without the early signal exits 0.
+        self.assertEqual(self.capture(self.app(trap=False), "qemu", None, early=True), 143)
+        self.assertEqual(self.capture(self.app(trap=True), "qemu", signal.SIGTERM), 0)
+
+    def test_a_stop_before_the_app_exists_reaches_it(self):
+        # The stop lands while bwrap is still setting up: no app process to signal yet. The
+        # supervisor passes it on once the app appears instead of losing it (which would hang).
+        slow = Path(self.tmp.name) / "bwrap-up"
+        env = dict(os.environ, SLOW_BWRAP=str(slow))
+        app = self.app(trap=False)
+        p = subprocess.Popen([sys.executable, "-c", self.RUN % (str(ROOT / "generic"), "None", False,
+                              self.argv(app, "qemu", ["--no-frame"]))], env=env, start_new_session=True)
+        self.procs.append(p)
+        end = time.monotonic() + 10
+        while not slow.exists() and time.monotonic() < end:
+            time.sleep(0.005)
+        self.assertTrue(slow.exists(), "the fake bwrap never started")
+        self.assertFalse(self.ready.exists(), "the app must not be up yet")
+        p.send_signal(signal.SIGTERM)
+        self.assertEqual(p.wait(timeout=10), 143)
+        # Control: a stop once the app is up reaches its handler.
+        self.assertEqual(self.capture(self.app(trap=True), "qemu", signal.SIGTERM), 0)
 
     def test_stop_closes_the_live_window(self):
         # A stop ends the run, window included, instead of waiting for someone to close it.
