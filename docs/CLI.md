@@ -16,7 +16,7 @@ container entrypoint the CI gate runs, with the exact caps the nested bwrap+qemu
 |---------|--------------|
 | `./sim run <device>` | Boot one virtual device and run its **headless logical suite** (control + sensor + skin). The dev inner-loop. |
 | `./sim run-app <device> <arm64-bin\|bundled:name> [--shot file.ppm\|--window] [--fb0-path file [--fb0-hdr-path file]] [--no-frame] [--no-synth --input-device /dev/input/eventN] [--print-cmd] [-- args…]` | Attach a generic `/dev/fb0`, run any arm64 binary (or one the image ships) under qemu-tsp, and composite its pixels into the skin. |
-| `./sim gui [device]` | Open the **clickable `.scad`-rendered skin** — press the bezel, watch the control light. Live X11 window on a display host; autonomous Xvfb self-test when headless. Default `a133`. |
+| `./sim gui [device]` | **Deprecated: use [pfvd](https://github.com/pocketforge-os/pfvd)** (`pfvd --platform <platform checkout>`), the 3D device simulator; `sim gui` prints this notice and otherwise works as before. Opens the **clickable `.scad`-rendered skin** — press the bezel, watch the control light. Live X11 window on a display host; autonomous Xvfb self-test when headless. Default `a133`. |
 | `./sim check [devices…]` | The **full CI matrix**, exactly as [`sim-gate.yml`](../.github/workflows/sim-gate.yml) runs it (control + sensor + skin). With **no args** the device list **and** per-device posture (blocking / advisory / excluded) are **data-driven from `platform/ci-matrix.toml`** (read via `pf caps matrix` inside the image) — so a device added to that matrix runs here with no CLI change. Naming devices runs just those, hard. Run this before you push. |
 | `./sim devices` | List the virtual devices this image can run. |
 | `./sim build [base\|demo\|all]` | Build the pinned image(s) without running anything. |
@@ -92,6 +92,11 @@ Zero environment variables to set — the image bakes every pinned path (`QEMU_T
 (CI passes a run-scoped tag); `SIM_NETWORK=1` re-enables network on the otherwise-offline run phase.
 
 ## `sim gui` — driving the bezel controls
+
+> **Deprecated (D9).** The 3D simulator [pfvd](https://github.com/pocketforge-os/pfvd) replaces this
+> window: `pfvd --platform <platform checkout>` opens any device of that checkout with the model, a
+> live screen and the same control-plane verbs. `sim gui` prints a notice saying so at startup and
+> in `./sim help`; its behaviour is unchanged, and the headless gate (`./sim check`) is untouched.
 
 The live window turns every mouse gesture into the **same descriptor-resolved control-surface call**
 the headless suite injects. The gestures:

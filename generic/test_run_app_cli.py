@@ -25,6 +25,50 @@ SIM = ROOT / "sim"
 SPEC = importlib.util.spec_from_file_location("generic_capture", ROOT / "generic" / "generic_capture.py")
 
 
+class SimGuiDeprecation(unittest.TestCase):
+    """`./sim gui` is deprecated in favour of pfvd (D9): its help and its startup say so and point
+    at `pfvd --platform <checkout>`; nothing else changes (the same docker preflight follows)."""
+
+    NOTICE = "./sim gui is deprecated: use pfvd, the 3D device simulator (pfvd --platform <platform checkout>"
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory(prefix="pf-sim-gui-")
+        self.bin = Path(self.tmp.name) / "bin"; self.bin.mkdir()
+        fake = self.bin / "docker"
+        fake.write_text("#!/bin/sh\nexit 97\n")  # `docker info` fails: the preflight stops the run
+        fake.chmod(0o755)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def sim(self, *args):
+        env = dict(os.environ, PATH=f"{self.bin}:{os.environ['PATH']}", NO_COLOR="1")
+        return subprocess.run([str(SIM), *args], env=env, text=True, capture_output=True,
+                              stdin=subprocess.DEVNULL)
+
+    def test_help_marks_gui_deprecated(self):
+        r = self.sim("help")  # the usage text goes to stderr
+        self.assertEqual(r.returncode, 0, r.stderr)
+        gui = [l for l in r.stderr.splitlines() if l.lstrip().startswith("gui")]
+        self.assertEqual(len(gui), 1, r.stderr)
+        block = r.stderr[r.stderr.index(gui[0]):r.stderr.index("run-app <device>")]
+        self.assertIn("Deprecated: use pfvd", block)
+        self.assertIn("pfvd --platform <checkout>", block)
+        # Negative control: no other command is marked deprecated.
+        self.assertEqual(r.stderr.count("Deprecated"), 1, r.stderr)
+
+    def test_gui_startup_prints_the_notice_first_then_behaves_as_before(self):
+        r = self.sim("gui", "a133")
+        self.assertNotEqual(r.returncode, 0, "the fake docker cannot run the window")
+        lines = r.stderr.splitlines()
+        self.assertTrue(lines and self.NOTICE in lines[0], r.stderr)
+        # Unchanged behaviour: the same docker preflight runs right after the notice.
+        self.assertIn("docker", "\n".join(lines[1:]))
+        # Negative control: another command prints no notice.
+        other = self.sim("run", "a133")
+        self.assertNotIn("deprecated", other.stderr)
+
+
 class RunAppCli(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory(prefix="pf-run-app-cli-")
