@@ -13,9 +13,11 @@ import io
 import os
 from pathlib import Path
 import shlex
+import signal
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -442,6 +444,89 @@ class ExternalFramebuffer(unittest.TestCase):
         # Negative control: a short buffer is still an error, never a partial frame.
         with self.assertRaisesRegex(RuntimeError, "short framebuffer"):
             self.gc.capture_raw(path, out, w, h + 1)
+
+
+class SignalForwarding(unittest.TestCase):
+    """`docker stop` / Ctrl-C reach generic_capture (PID 2 under --init); it must pass them to the app.
+
+    The qemu launcher's chain is harness -> bwrap -> app. Real bwrap dies on SIGTERM without
+    passing it on, so the fake `bwrap` here (a script named bwrap, comm "bwrap") does the same:
+    only a signal sent to the app itself lets the app's handler run and the chain exit 0.
+    """
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory(prefix="pf-signal-")
+        d = Path(self.tmp.name)
+        self.mark = d / "mark"; self.ready = d / "ready"
+        self.bwrap = d / "bwrap"
+        self.bwrap.write_text('#!/bin/sh\n"$@" &\nwait $!\n')
+        self.harness = d / "harness"
+        self.procs = []
+        self.harness.write_text(f'#!/bin/sh\nexec {shlex.quote(str(self.bwrap))} "$@"\n')
+        for p in (self.bwrap, self.harness):
+            p.chmod(0o755)
+
+    def tearDown(self):
+        for p in self.procs:  # a failing run must not leave its app looping
+            try:
+                os.killpg(p.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            p.wait()
+        self.tmp.cleanup()
+
+    def app(self, trap, loop=True):
+        app = Path(self.tmp.name) / "app"
+        app.write_text("#!/bin/sh\n" + (f"trap 'echo $1 > {shlex.quote(str(self.mark))}; exit 0' TERM INT\n" if trap else "")
+                       + f"echo up > {shlex.quote(str(self.ready))}\n"
+                       + ("while :; do sleep 0.02; done\n" if loop else "sleep 0.2\n"))
+        app.chmod(0o755)
+        return app
+
+    def capture(self, app, launcher, sig, window_secs=None):
+        for p in (self.mark, self.ready):
+            if p.exists(): p.unlink()
+        # --window: the skin window is a stand-in process that would stay open for window_secs.
+        run = ("import subprocess, sys; sys.path[:0] = [%r]; import generic_capture as gc\n"
+               "gc.dimensions = lambda p, d: (None, (4, 2))\n"
+               "gc.composite = lambda *a: subprocess.Popen(['sleep', %r], stdin=subprocess.PIPE, text=True)\n"
+               "sys.argv[1:] = %r; sys.exit(gc.main())")
+        frame = ["--window", "--skin-render", "/s"] if window_secs else ["--no-frame"]
+        argv = ["--device", "x", "--platform", "/p", "--launcher", launcher, "--app", str(app),
+                "--qemu-tsp", "/q", "--rootfs", "/r", "--harness", str(self.harness),
+                "--frame", str(Path(self.tmp.name) / "frame.ppm"), *frame, "--", "tag"]
+        p = subprocess.Popen([sys.executable, "-c", run % (str(ROOT / "generic"), str(window_secs), argv)],
+                             start_new_session=True)
+        self.procs.append(p)
+        end = time.monotonic() + 10
+        while not self.ready.exists() and time.monotonic() < end:
+            time.sleep(0.01)
+        self.assertTrue(self.ready.exists(), "the app never started")
+        if sig is not None:
+            p.send_signal(sig)
+        return p.wait(timeout=10)
+
+    def test_sigterm_reaches_the_app_through_bwrap(self):
+        self.assertEqual(self.capture(self.app(trap=True), "qemu", signal.SIGTERM), 0)
+        self.assertEqual(self.mark.read_text(), "tag\n", "the app's TERM handler did not run")
+        # Negative control: an app with no handler dies of the forwarded TERM, reported as 128+15.
+        self.assertEqual(self.capture(self.app(trap=False), "qemu", signal.SIGTERM), 143)
+        self.assertFalse(self.mark.exists())
+
+    def test_sigint_and_native_launcher(self):
+        self.assertEqual(self.capture(self.app(trap=True), "native", signal.SIGINT), 0)
+        self.assertEqual(self.mark.read_text(), "tag\n")
+        self.assertEqual(self.capture(self.app(trap=False), "native", signal.SIGINT), 130)
+
+    def test_stop_closes_the_live_window(self):
+        # A stop ends the run, window included, instead of waiting for someone to close it.
+        t0 = time.monotonic()
+        self.assertEqual(self.capture(self.app(trap=True), "qemu", signal.SIGTERM, window_secs=30), 0)
+        self.assertLess(time.monotonic() - t0, 8)
+        self.assertEqual(self.mark.read_text(), "tag\n")
+        # Negative control: an app that ends on its own leaves the window open until it closes.
+        t0 = time.monotonic()
+        self.assertEqual(self.capture(self.app(trap=True, loop=False), "qemu", None, window_secs=1.5), 0)
+        self.assertGreaterEqual(time.monotonic() - t0, 1.5)
 
 
 class CaptureCadence(unittest.TestCase):

@@ -54,7 +54,9 @@ binary:
 | `hwprobe-lite` | The control/sensor suites' probe; it needs their io-dir and never writes `/dev/fb0`. |
 
 A name the image does not ship fails in the container with the list it does ship.
-`run-app` runs the container with `--init`, so `docker stop` and Ctrl-C reach the app promptly.
+`run-app` runs the container with `--init`, and the capture supervisor passes SIGTERM/SIGINT on to
+the app (past bwrap, which would not), so `docker stop` and Ctrl-C let the app exit cleanly and its
+exit status is the run's.
 
 Host-owned screen and input (for a host viewer such as pfvd):
 

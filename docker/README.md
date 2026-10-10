@@ -116,7 +116,8 @@ is polling; the optional `fb0.hdr` sidecar is specified in
 [`../docs/FB0-SIDECAR.md`](../docs/FB0-SIDECAR.md); `--fb0-hdr-path <host-file>` binds a second file
 at `/run/pfvd/fb0.hdr` (the harness puts it at `/dev/fb0.hdr`) where an in-container producer can
 publish it. `--input-device` without `--no-synth`, and `--no-synth` without an `--input-device`,
-are errors. Every `run-app` adds `--init` so `docker stop` reaches the app. A container with no
+are errors. Every `run-app` adds `--init`, and `generic_capture.py` forwards SIGTERM/SIGINT to
+the app, so `docker stop` lets it exit cleanly. A container with no
 input node at all has no `/dev/input`, and the harness refuses it by name rather than letting
 bwrap fail on the missing bind source. `./sim check` and the CI gate keep the default cap set.
 

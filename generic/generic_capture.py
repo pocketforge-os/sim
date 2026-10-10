@@ -2,6 +2,7 @@
 """Run a native or arm64 app with a shared XRGB8888 fb0 and capture/composite it."""
 import argparse
 import os
+import signal
 import stat
 import subprocess
 import sys
@@ -106,6 +107,53 @@ def prepare_fb0_hdr(hdr, fb0, ident=None):
     return hdr
 
 
+def app_pids(root):
+    """``root`` and its descendants, except bwrap processes: the app and whatever it started.
+
+    bwrap dies on SIGTERM without passing it into its sandbox (which would keep running), so a
+    stop signal goes past it to qemu-tsp running the app. The sandbox's pid namespace is a child
+    of ours, so its processes are visible here with their parent pids.
+    """
+    procs = {}
+    for d in os.listdir("/proc"):
+        if not d.isdigit():
+            continue
+        try:
+            with open(f"/proc/{d}/stat") as f:
+                st = f.read()
+        except OSError:
+            continue
+        comm, rest = st[st.index("(") + 1:st.rindex(")")], st[st.rindex(")") + 2:].split()
+        procs[int(d)] = (int(rest[1]), comm)
+    out, todo = [], [root]
+    while todo:
+        pid = todo.pop()
+        if pid in procs and procs[pid][1] != "bwrap":
+            out.append(pid)
+        todo += [c for c, (ppid, _) in procs.items() if ppid == pid]
+    return out
+
+
+def forward_stop_signals(proc):
+    """Pass SIGTERM/SIGINT on to the app, so it can exit cleanly and its status is reported.
+
+    Under `docker run --init` (./sim run-app) only this supervisor receives `docker stop` or an
+    attached Ctrl-C; without forwarding it would die and take the app down uncleanly. Returns a
+    list that records the signals received, so the caller can end the run (the live window too).
+    """
+    stopped = []
+    def forward(sig, _frame):
+        stopped.append(sig)
+        for pid in app_pids(proc.pid):
+            try:
+                os.kill(pid, sig)
+            except ProcessLookupError:
+                pass
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        signal.signal(sig, forward)
+    return stopped
+
+
 def ppm_art(png, out):
     w, h, rgb = read_png(png)
     write_ppm(out, w, h, rgb)
@@ -171,6 +219,7 @@ def main():
         # A caller-owned --fb0 is read by its owner, so without --window only the exit frame is kept.
         cadence = not a.no_frame and (a.window or a.fb0 is None)
         proc = subprocess.Popen(cmd, env=env)
+        stopped = forward_stop_signals(proc)
         window = None
         if a.window:
             if not a.skin_render: ap.error("--skin-render is required with --window")
@@ -183,7 +232,8 @@ def main():
             if window and window.poll() is None:
                 window.stdin.write(f"reload {os.path.join(work,'scene.txt')}\n"); window.stdin.flush()
             time.sleep(max(1,a.cadence_ms)/1000.0)
-        if proc.returncode: return proc.returncode
+        # A signal death (negative returncode) is reported the shell's way, 128 + signal.
+        if proc.returncode: return proc.returncode if proc.returncode > 0 else 128 - proc.returncode
         if a.no_frame: return 0
         capture_raw(fb, a.frame, w, h)
         if a.shot:
@@ -191,6 +241,9 @@ def main():
             shot = composite(skin, a.frame, a.shot, a.skin_render, work)
             return shot.wait()
         if window:
+            if stopped and window.poll() is None:
+                window.terminate(); window.wait()
+                return 0
             return window.wait()
     return 0
 
