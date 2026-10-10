@@ -90,6 +90,10 @@ the one `platform/ci-matrix.toml` keystone (see [`docs/ADD-A-DEVICE.md`](docs/AD
 | `hwprobe-smoke` ([pf-hwprobe](https://github.com/pocketforge-os/pf-hwprobe)) | the same descriptor-generic matrix, with `pf-hwprobe.arm64` as the app | **required** — a133 blocking key |
 | `sim-descriptor-gate` + `skin-drift` ([platform](https://github.com/pocketforge-os/platform)) | rebuilds the sim against the PR's descriptors / checks the `.scad → skin → [skin.parts]` chain | advisory |
 
+Separately, [`sim-hermetic`](.github/workflows/sim-hermetic.yml) (job `hermetic-tests`, advisory,
+not a required check) runs the standalone hermetic unit tests that `./sim check` does not:
+`generic/test_run_app_cli.py` and `shell/test_check_shell.py`, inside the same image.
+
 ## Layout
 
 ```
