@@ -389,12 +389,9 @@ Verdict: declared sim-ready > derived model-only ✗ · 2 errors · 2 warnings �
 Next rung needs: R_NODE_SET: input 'guide' has no skin_part
 ```
 
-The command's exit status is 0 whether or not the report found errors. A script gates on the
-JSON envelope instead:
-
-```bash
-pfvd-cli --json device report --device <id> --platform <platform> | jq -e '.result.ok'
-```
+The command exits 5 (assertion failed) when the report has errors and 0 when it has none, so a
+script gates on it directly (pfvd#15; with `--json` the envelope stays `ok: true` and `result.ok`
+carries the verdict).
 
 ### The rungs
 
