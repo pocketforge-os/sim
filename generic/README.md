@@ -10,14 +10,20 @@ is fed unchanged into `skin-render` for an offscreen `--shot` or live `--window`
 compares the result with `baseline/<device>/frame.png`, and produces a skin composite.
 The existing hwprobe-lite control and skin checks remain unchanged.
 
+`fb-anim.c` is the continuous counterpart: it redraws `/dev/fb0` at 60 Hz until SIGTERM/SIGINT
+and exits 0, and publishes the `fb0.hdr` seqlock header when `PF_FB0_HDR` names one. The image
+ships both apps (`./sim run-app <device> bundled:fb-anim`); `test_fb_anim.py` checks fb-anim.
+
 ```bash
 ./sim run-app a133 ./app.arm64 --shot app.ppm
 ./sim run-app a133 ./app.arm64 --window -- --flag-for-the-app
 ```
 
 `--fb0 <file>` (what `./sim run-app --fb0-path` passes) binds a caller-owned, pre-sized file
-instead of the private buffer; see `docs/FB0-SIDECAR.md`. Host-side flag tests:
-`python3 -m unittest generic/test_run_app_cli.py`.
+instead of the private buffer, and `--fb0-hdr <file>` a 64-byte header file beside it; see
+`docs/FB0-SIDECAR.md`. The caller reads its own `--fb0`, so without `--window` the capture skips
+the cadence snapshots and converts only the frame at a clean exit; `--no-frame` skips that too.
+Host-side tests: `python3 -m unittest generic/test_run_app_cli.py generic/test_fb_anim.py`.
 
 See `docs/HONESTY-CONTRACT.md`: this proves pixel transport and bezel composition, not
 timing, vsync, GPU, display-engine, or full fbdev ioctl behavior.

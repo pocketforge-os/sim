@@ -69,16 +69,18 @@ against a hostile local user.
 **The harness does not write `fb0.hdr`.** The app writes `/dev/fb0` directly through its own
 mmap; nothing in the path sees a "frame done" moment, and an unmodified fbdev app gives none.
 The consumer detects change by **polling** the buffer at its own cadence (for example a 60 Hz
-timer, comparing a few 4 KiB stripes before a full upload). `generic_capture.py` still snapshots
-the buffer into `sim-capture/frame.ppm` on its fixed cadence for `--shot`/`--window`; that
-snapshot is a converted copy for the skin compositor, not a present signal.
+timer, comparing a few 4 KiB stripes before a full upload). `generic_capture.py` snapshots
+the buffer into `sim-capture/frame.ppm` on its fixed cadence for `--window` and for its private
+buffer; that snapshot is a converted copy for the skin compositor, not a present signal. With
+`--fb0-path` and no `--window` the caller reads its own file, so the capture skips the cadence
+snapshots and keeps only the frame at a clean exit; `--no-frame` skips that one too.
 
 Tearing is accepted: this is pixel transport, not vsync (see `HONESTY-CONTRACT.md`). A
 double-buffered present would need an ioctl a plain file cannot provide.
 
 ## `fb0.hdr` — the optional sidecar
 
-A producer that does know when a frame is complete (hwprobe-lite, pf-hwprobe, fb-pattern, a
+A producer that does know when a frame is complete (fb-anim, hwprobe-lite, pf-hwprobe, fb-pattern, a
 future in-container presenter) may publish a 64-byte header in a **sibling** file `fb0.hdr`, so
 `fb0` itself stays a plain buffer. A consumer must work without it: absent, short, or bad-magic
 header means "poll the buffer".
@@ -108,3 +110,24 @@ skip the frame.
 `width`, `height` and `stride` must agree with the `PF_FB_*` values the app received and with the
 `fb0` file size (`stride * height <= size`). A consumer that finds a mismatch ignores the header
 and reports it.
+
+### Getting the header out of the container
+
+`fb0` crosses as one bound file, so a container producer needs a second one for the header:
+
+```bash
+truncate -s 64 /run/user/$(id -u)/pfvd/fb0.hdr && chmod o+rw /run/user/$(id -u)/pfvd/fb0.hdr
+./sim run-app a133 bundled:fb-anim --fb0-path /run/user/$(id -u)/pfvd/fb0 \
+  --fb0-hdr-path /run/user/$(id -u)/pfvd/fb0.hdr --no-synth --input-device /dev/input/event7
+```
+
+The caller creates the header file (at least 64 bytes, zero-filled is fine: bad magic means
+"poll") beside `fb0`, where a consumer looks for it. The same rules as `--fb0-path` apply: an
+existing regular file, the sandbox permission class, never created or truncated, and the
+`dev:ino` checked on the host and again in the container (`--fb0-hdr-ident`). It must not be the
+`fb0` file itself. `./sim` binds it at `/run/pfvd/fb0.hdr`; `generic_capture.py --fb0-hdr` checks
+it and sets `FB0_HDR_BIND`; the harness binds it at `/dev/fb0.hdr` and gives the app
+`PF_FB0_HDR=/dev/fb0.hdr`. A producer that sees no `PF_FB0_HDR` publishes nothing.
+
+`fb-anim` (in the image, `bundled:fb-anim`) is the reference producer: it redraws at 60 Hz and
+writes the header around every frame. `fb-pattern` and `hwprobe-lite` publish no header.

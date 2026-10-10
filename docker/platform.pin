@@ -2,12 +2,15 @@
 # platform is PUBLIC (made public 2026-06-27, tsp-qc1.4), so the Dockerfile clones it directly at
 # the pinned commit below — truly reproducible-from-clean, no out-of-band input.
 repo   = https://github.com/pocketforge-os/platform.git
-commit = 6cc6664639bdcc361923c93387c323d581b181b4
+commit = a86adf6fa4c5d8f4a97db50d0fa23035adfe816a
 ref    = origin/main
-# Descriptor SHA-256 at this commit (platform main @ PR #81, tsp-65jc.27 — the rotatable top-edge
-# view: adds [skin.views.top] + [skin.views.top.parts] to BOTH descriptors and the top-view atlases
-# skins/<id>/body_top.png + body_lit_top.png, gated by the multi-view check-skin-drift.py. The
-# additive [skin.views] block changes the a133/a523 capabilities.toml SHAs below; the prior pin
-# c98ffcb (PR #76) is a linear ancestor):
-#   devices/a133/capabilities.toml be9f8801129e5c177e4fef2f304260154434da46f6d48e1e53f7b804efd7067f
-#   devices/a523/capabilities.toml 0bf57f0903481d7625ebd50a506bc4d2d2f2246f6366ed0dce9a462f9f2dc3bd
+# Descriptor SHA-256 at this commit (platform main @ PR #309, tsp-h5ed.46.28 — the bump past pfvd's
+# platform.pin 24ace826; the prior pin 6cc66646 (PR #81) is a linear ancestor). The a133/a523
+# descriptors change: a133 sticks are unsigned 12-bit (0..4095, flat/fuzz 0), a133 west/north use
+# the canonical positional codes (BTN_NORTH 307), both gain VOL-/VOL+ system rows (KEY_VOLUMEDOWN/
+# KEY_VOLUMEUP), plus the v2 [model]/[physical] rows the sim does not read. So the
+# `uinput_synth.py plan` output CHANGES for both devices (old: a133 22c33607…, a523 65143215…) and
+# now equals pfvd's vendored plan fixtures byte for byte (a133 3a210461…, a523 955015bb…), the same
+# plans platform 24ace826 yields:
+#   devices/a133/capabilities.toml 2b77f51f7c350efd3e90f5c815bff8634637b8dcd8d4c37819de5321a3c4a1a7
+#   devices/a523/capabilities.toml 44a095d7974ec206aba37774c99ad4ad975f737d189218458327e909bc8daeb3
