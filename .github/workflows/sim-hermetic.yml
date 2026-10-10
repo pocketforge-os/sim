@@ -1,0 +1,48 @@
+name: sim-hermetic
+
+# Standalone hermetic unit tests (tsp-h5ed.46.19). `generic/test_run_app_cli.py` and
+# `shell/test_check_shell.py` are not part of `./sim check`, so without this workflow no CI job
+# runs them. NON-GATE: the job name `hermetic-tests` is NOT a required check (the only required
+# context is sim-gate's `headless-suite`, ruleset 19755679); sim-gate.yml and `./sim check` are
+# untouched.
+#
+# Same container pattern as sim-gate: the self-hosted builder VM, the fork guard (tsp-20u1
+# confinement invariant), a run-scoped image tag built by the developer CLI, and image cleanup.
+# The tests need no device, no /dev/uinput and no caps: they run as the runner's uid with
+# --network none against the source tree baked into the image (/opt/sim).
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sim-hermetic-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  hermetic-tests:
+    # Build-lab confinement invariant (tsp-20u1): never run fork/public-PR code on this runner.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, pf-builder-vm]
+    timeout-minutes: 45
+    env:
+      IMG: pocketforge-sim:hermetic-${{ github.run_id }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4 (repo requires SHA-pinned actions)
+
+      - name: Build the pinned image (same CLI build as the gate)
+        run: SIM_IMAGE="$IMG" ./sim build base
+
+      - name: Hermetic tests (generic/, shell/)
+        run: |
+          docker run --rm --network none --user "$(id -u):$(id -g)" -e HOME=/tmp \
+            -e PYTHONDONTWRITEBYTECODE=1 -w /opt/sim --entrypoint python3 "$IMG" \
+            -m unittest -v generic/test_run_app_cli.py shell/test_check_shell.py
+
+      - name: Cleanup CI image
+        if: always()
+        run: docker image rm -f "$IMG" || true
