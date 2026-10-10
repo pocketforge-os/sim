@@ -31,8 +31,8 @@ class RunAppCli(unittest.TestCase):
         fake = self.bin / "docker"
         fake.write_text(f"#!/bin/sh\necho \"$@\" >> {shlex.quote(str(self.docker_log))}\nexit 97\n")
         fake.chmod(0o755)
-        # `stat` shim: FAKE_STAT=<uid gid mode> stands in for a root-/gid-0-owned fb0 the test
-        # cannot create without root; unset, it is the real stat.
+        # `stat` shim: FAKE_STAT=<uid gid mode dev:ino type> stands in for a root-/gid-0-owned fb0
+        # the test cannot create without root; unset, it is the real stat.
         shim = self.bin / "stat"
         shim.write_text('#!/bin/sh\n[ -n "$FAKE_STAT" ] && { echo "$FAKE_STAT"; exit 0; }\nexec /usr/bin/stat "$@"\n')
         shim.chmod(0o755)
@@ -92,6 +92,15 @@ class RunAppCli(unittest.TestCase):
         tail = argv[argv.index("run-app"):]
         self.assertEqual(tail[tail.index("--fb0"):][:2], ["--fb0", "/run/pfvd/fb0"])
 
+    def test_fb0_path_pins_the_checked_inode(self):
+        # The host check's dev:ino travels with the bind, so a swap before docker binds is refused.
+        argv = self.printed("--fb0-path", str(self.fb0))
+        st = self.fb0.stat()
+        tail = argv[argv.index("run-app"):]
+        self.assertEqual(tail[tail.index("--fb0-ident"):][:2], ["--fb0-ident", f"{st.st_dev}:{st.st_ino}"])
+        # Negative control: no --fb0-path, no pin.
+        self.assertNotIn("--fb0-ident", self.printed())
+
     def test_app_args_follow_double_dash(self):
         argv = self.printed("--fb0-path", str(self.fb0), "--", "--sim-frame", "x y")
         self.assertEqual(argv[-3:], ["--", "--sim-frame", "x y"])
@@ -126,7 +135,7 @@ class RunAppCli(unittest.TestCase):
                                   ("1000 0 660", True, None), ("1000 0 606", False, "chmod g+rw"),
                                   ("1000 1000 606", True, None), ("1000 1000 660", False, "chmod o+rw")):
             with self.subTest(stat=stat_out):
-                self.fake_stat = stat_out
+                self.fake_stat = f"{stat_out} 1:2 regular file"
                 if ok:
                     self.printed("--fb0-path", str(self.fb0))
                 else:
@@ -134,6 +143,11 @@ class RunAppCli(unittest.TestCase):
 
     def test_rejects_fb0_path_directory(self):
         self.assert_rejected(["--fb0-path", self.tmp.name, "--print-cmd"], "--fb0-path")
+
+    def test_rejects_fb0_path_fifo(self):
+        fifo = Path(self.tmp.name) / "fifo"; os.mkfifo(fifo, 0o666)
+        self.assert_rejected(["--fb0-path", str(fifo), "--print-cmd"], "existing regular file")
+        self.printed("--fb0-path", str(self.fb0))  # positive control, same invocation
 
     def test_rejects_missing_flag_values(self):
         self.assert_rejected(["--fb0-path"], "--fb0-path needs")
@@ -188,6 +202,37 @@ class ExternalFramebuffer(unittest.TestCase):
                                (1000, 0, 0o606), (1000, 1000, 0o660), (1000, 1000, 0o604)):
             with self.subTest(uid=uid, gid=gid, mode=oct(mode)):
                 self.assertFalse(can(uid, gid, mode))
+
+    def ident(self, path):
+        st = os.stat(path)
+        return f"{st.st_dev}:{st.st_ino}"
+
+    def test_external_buffer_matching_host_ident_is_accepted(self):
+        path = self.write_fb(bytes(32))
+        self.assertEqual(self.gc.prepare_fb0(path, 4, 2, self.tmp.name, self.ident(path)), path)
+
+    def test_replaced_external_buffer_is_rejected(self):
+        # The host checked one inode; the path now names another (swapped before the bind).
+        path = self.write_fb(bytes(32))
+        checked = self.ident(path)
+        other = os.path.join(self.tmp.name, "other")
+        with open(other, "wb") as f:
+            f.write(bytes(32))
+        os.chmod(other, 0o666)
+        os.replace(other, path)
+        self.assertNotEqual(self.ident(path), checked)
+        with self.assertRaisesRegex(RuntimeError, "replaced after the host check"):
+            self.gc.prepare_fb0(path, 4, 2, self.tmp.name, checked)
+        # Positive control: the same file against its own ident.
+        self.assertEqual(self.gc.prepare_fb0(path, 4, 2, self.tmp.name, self.ident(path)), path)
+
+    def test_external_fifo_is_rejected_without_blocking(self):
+        # The check opens the path once (O_PATH): a FIFO must not block it and is not a buffer.
+        fifo = os.path.join(self.tmp.name, "fifo"); os.mkfifo(fifo, 0o666)
+        with self.assertRaisesRegex(RuntimeError, "does not exist"):
+            self.gc.prepare_fb0(fifo, 4, 2, self.tmp.name)
+        self.assertEqual(self.gc.prepare_fb0(self.write_fb(bytes(32)), 4, 2, self.tmp.name),
+                         os.path.join(self.tmp.name, "fb0"))
 
     def test_short_external_buffer_is_rejected(self):
         path = self.write_fb(bytes(31))

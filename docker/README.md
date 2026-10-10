@@ -108,8 +108,8 @@ The cap set changes only for input; the bwrap knobs stay:
 | `--device-cgroup-rule "c 13:* rmw"`, `--cap-add SYS_ADMIN`, `apparmor=unconfined`, `seccomp=unconfined` | unchanged (bwrap still needs them; its `--dev-bind /dev/input` exposes exactly the passed nodes) |
 
 `--fb0-path <host-file>` adds `-v <host-file>:/run/pfvd/fb0`; inside the container
-`generic_capture.py --fb0 /run/pfvd/fb0` sets `FB0_BIND=/run/pfvd/fb0`, and the harness binds it
-at `/dev/fb0`. The caller creates and sizes the file and makes it `o+rw`, or `u+rw` if root-owned (the app
+`generic_capture.py --fb0 /run/pfvd/fb0 --fb0-ident <dev:ino>` checks that the bound file is the
+inode `./sim` checked, sets `FB0_BIND=/run/pfvd/fb0`, and the harness binds it at `/dev/fb0`. The caller creates and sizes the file and makes it `o+rw`, or `u+rw` if root-owned (the app
 is uid 0 with bwrap's capabilities dropped); it is never truncated. The present signal
 is polling; the optional `fb0.hdr` sidecar is specified in
 [`../docs/FB0-SIDECAR.md`](../docs/FB0-SIDECAR.md). `--input-device` without `--no-synth`, and

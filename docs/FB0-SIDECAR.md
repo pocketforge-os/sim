@@ -24,13 +24,45 @@ chmod o+rw /run/user/$(id -u)/pfvd/fb0                          # the sandboxed 
   `o+rw`; a root-owned one `u+rw`. `./sim` and `generic_capture.py` refuse it otherwise and name
   the `chmod`. Keep it in a `0700` directory (`/run/user/$UID/...`) so only the caller can reach it.
 - **How it crosses:** by path. `./sim` adds `-v <fb0-path>:/run/pfvd/fb0` to `docker run` and
-  passes `--fb0 /run/pfvd/fb0` to `generic_capture.py`, which sets `FB0_BIND=/run/pfvd/fb0`; the
+  passes `--fb0 /run/pfvd/fb0 --fb0-ident <dev:ino>` to `generic_capture.py`, which checks the
+  bound inode (see [Check, then bind](#check-then-bind)) and sets `FB0_BIND=/run/pfvd/fb0`; the
   harness (`harness/run-in-harness.sh`) then binds it at `/dev/fb0` inside bwrap. This is the
   same `FB0_BIND` path the default run uses for its private buffer. Without `--fb0-path`
   nothing changes.
 - **Layout:** a plain fbdev-shaped buffer. XRGB8888, little-endian (bytes B, G, R, X), stride
   `width * 4`, top row first. The app sees `PF_FB_WIDTH`, `PF_FB_HEIGHT` and `PF_FB_STRIDE`.
   No header is ever placed inside this file.
+
+## Check, then bind
+
+`docker run -v` and `--device` take host paths, and the daemon resolves them when it creates the
+container. A file descriptor cannot be handed across, so every host-side check is a
+check-then-use against a path. On the trusted single-user host this guards against accidents
+(a file replaced or a node renumbered between the check and the bind). It does not defend
+against a hostile local user.
+
+- **`--fb0-path`:** `./sim` resolves the path and runs one `stat`, so the type, owner, mode and
+  `dev:ino` all come from the same inode. It passes that `dev:ino` as `--fb0-ident`. Inside the
+  container, `generic_capture.py` opens `/run/pfvd/fb0` once (`O_PATH`, which needs no read
+  permission and does not block on a FIFO) and takes every check from one `fstat` of that fd:
+  regular file, the sandbox permission class, size, and `dev:ino` equal to the host's. A docker
+  bind mount keeps `st_dev`/`st_ino`, so if the path named a different file when docker bound
+  it, the run is refused before the app starts ("replaced after the host check").
+  `/run/pfvd/fb0` is a mount point that the host cannot rename or replace, so the harness's
+  later bind of that path into bwrap is the inode just checked.
+  **Residual window:** the swap is detected, not prevented. Docker has already bound the other
+  file read-write into the container, but nothing writes to it before the refusal. A `chmod`
+  on the same inode after the in-container check is the owner's own change. It is not a swap.
+  The native launcher (`--launcher native`, no container and no `--fb0-ident`) hands the path
+  straight to the app and keeps the plain window.
+- **`--input-device`:** still a path-pattern check (`/dev/input/eventN`) plus `[ -c ]` just
+  before `docker run`. No fd-based check is made: the caller may not be able to open the node
+  (it is typically `root:input 0660`, and docker does not need the caller's permission), and
+  docker `--device` would resolve the path again anyway. `/dev/input` is root-owned, so
+  without root only the kernel can change what `eventN` names.
+  **Residual window:** the caller's uinput device is destroyed and `eventN` is reused by
+  another device between the check and `docker run`. The container then gets that device. Keep
+  the uinput device open until the run ends.
 
 ## Present signal: poll
 
