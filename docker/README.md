@@ -87,6 +87,34 @@ governs bwrap on the host, not inside a container) — no persistent host change
 `/dev/input` exposes the host's real input devices to the container — acceptable on a dedicated sim/CI host;
 note it as a caveat. Rootless/podman is an untested follow-up caveat.
 
+### `run-app` with host-owned screen and input (pfvd, tsp-h5ed.46.4)
+
+`./sim run-app` can hand the app a caller-owned framebuffer and caller-created input nodes, so a
+host viewer reads pixels and injects input without the container synthesising anything:
+
+```bash
+./sim run-app a133 ./app.arm64 \
+  --fb0-path /run/user/$(id -u)/pfvd/fb0 \
+  --no-synth --input-device /dev/input/event7 \
+  --print-cmd                                    # dry run: print the docker run argument list
+```
+
+The cap set changes only for input; the bwrap knobs stay:
+
+| Default `run-app` | With `--no-synth --input-device /dev/input/eventN` |
+|-------------------|------------------------------------------------------|
+| `--device /dev/uinput` | **dropped**: the host created the uinput device; the container cannot create more |
+| `-v /dev/input:/dev/input` | **replaced** by one `--device /dev/input/eventN` per node (repeat `--input-device`), so the container sees only this session's nodes and two sessions do not see each other's pads |
+| `--device-cgroup-rule "c 13:* rmw"`, `--cap-add SYS_ADMIN`, `apparmor=unconfined`, `seccomp=unconfined` | unchanged (bwrap still needs them; its `--dev-bind /dev/input` exposes exactly the passed nodes) |
+
+`--fb0-path <host-file>` adds `-v <host-file>:/run/pfvd/fb0`; inside the container
+`generic_capture.py --fb0 /run/pfvd/fb0` sets `FB0_BIND=/run/pfvd/fb0`, and the harness binds it
+at `/dev/fb0`. The caller creates and sizes the file; it is never truncated. The present signal
+is polling; the optional `fb0.hdr` sidecar is specified in
+[`../docs/FB0-SIDECAR.md`](../docs/FB0-SIDECAR.md). `--input-device` without `--no-synth`, and
+`--no-synth` without an `--input-device`, are errors. `./sim check` and the CI gate keep the
+default cap set.
+
 ## Commands
 
 ```bash

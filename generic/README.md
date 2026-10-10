@@ -15,5 +15,9 @@ The existing hwprobe-lite control and skin checks remain unchanged.
 ./sim run-app a133 ./app.arm64 --window -- --flag-for-the-app
 ```
 
+`--fb0 <file>` (what `./sim run-app --fb0-path` passes) binds a caller-owned, pre-sized file
+instead of the private buffer; see `docs/FB0-SIDECAR.md`. Host-side flag tests:
+`python3 -m unittest generic/test_run_app_cli.py`.
+
 See `docs/HONESTY-CONTRACT.md`: this proves pixel transport and bezel composition, not
 timing, vsync, GPU, display-engine, or full fbdev ioctl behavior.

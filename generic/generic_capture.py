@@ -32,6 +32,26 @@ def capture_raw(path, out, w, h):
     os.replace(tmp, out)
 
 
+def prepare_fb0(external, w, h, work):
+    """Return the fb0 file the harness binds at /dev/fb0.
+
+    Default: a private, pre-sized buffer inside ``work``. With ``external`` (``./sim run-app
+    --fb0-path``) the caller owns the file and its size; it is used as-is and never created or
+    truncated here, because a host reader may already have it mapped (truncating would SIGBUS it).
+    """
+    need = w * h * 4
+    if external is None:
+        fb = os.path.join(work, "fb0")
+        with open(fb, "wb") as f: f.truncate(need)
+        return fb
+    if not os.path.isfile(external):
+        raise RuntimeError(f"--fb0 {external} does not exist (the caller creates and sizes it)")
+    have = os.path.getsize(external)
+    if have < need:
+        raise RuntimeError(f"--fb0 {external} is {have} bytes; this device needs {need} ({w}x{h} XRGB8888)")
+    return external
+
+
 def ppm_art(png, out):
     w, h, rgb = read_png(png)
     write_ppm(out, w, h, rgb)
@@ -55,6 +75,7 @@ def main():
     ap.add_argument("--qemu-tsp"); ap.add_argument("--rootfs"); ap.add_argument("--harness")
     ap.add_argument("--frame", required=True); ap.add_argument("--shot"); ap.add_argument("--window", action="store_true")
     ap.add_argument("--skin-render"); ap.add_argument("--cadence-ms", type=int, default=50)
+    ap.add_argument("--fb0", help="caller-owned fb0 file to bind instead of a private buffer")
     ap.add_argument("app_args", nargs=argparse.REMAINDER)
     a = ap.parse_args()
     if a.app_args[:1] == ["--"]:
@@ -65,8 +86,11 @@ def main():
         # A private, pre-sized shared mapping is bindable by bwrap at /dev/fb0 and is
         # removed with this temporary directory. It has the same host/app mmap seam as
         # fb-render's memfd, while providing the pathname bwrap requires on supported CI.
-        fb = os.path.join(work, "fb0")
-        with open(fb, "wb") as f: f.truncate(w*h*4)
+        # --fb0 substitutes a caller-owned file (docs/FB0-SIDECAR.md).
+        try:
+            fb = prepare_fb0(a.fb0, w, h, work)
+        except RuntimeError as e:
+            ap.error(str(e))
         env = os.environ.copy(); env.update(PF_FB_WIDTH=str(w), PF_FB_HEIGHT=str(h), PF_FB_STRIDE=str(w*4))
         if a.launcher == "native":
             env["PF_FB0"] = fb; cmd = [a.app] + a.app_args
