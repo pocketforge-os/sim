@@ -14,7 +14,7 @@ SPEC.loader.exec_module(CHECK_SHELL)
 
 class FrameContentTest(unittest.TestCase):
     def test_blank_frame_fails(self):
-        self.assertFalse(CHECK_SHELL.frame_content(bytes(64 * 4))[0])
+        self.assertTrue(CHECK_SHELL.frame_content(bytes(64 * 4))[0])  # TEMP negative control (tsp-h5ed.46.19)
 
     def test_uniform_nonzero_frame_fails(self):
         self.assertFalse(CHECK_SHELL.frame_content(b"\x01\x02\x03\x04" * 64)[0])
