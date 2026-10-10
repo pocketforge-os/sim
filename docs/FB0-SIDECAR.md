@@ -18,10 +18,11 @@ chmod o+rw /run/user/$(id -u)/pfvd/fb0                          # the sandboxed 
   `generic_capture.py` **never create or truncate** a `--fb0-path` file: a reader may already have
   it mapped, and shrinking a mapped file gives that reader `SIGBUS`. A missing file, a directory,
   or a file shorter than the device needs is a named error before the app starts.
-- **Permissions:** inside bwrap the app is uid 0 with every capability dropped, so it opens a
-  caller-owned file under the file's *other* bits. The file must be `o+rw` (or root-owned);
-  `./sim` refuses it otherwise. Keep it in a `0700` directory (`/run/user/$UID/...`) so only the
-  caller can reach it.
+- **Permissions:** inside bwrap the app is uid 0 / gid 0 with every capability dropped, so there
+  is no DAC override and exactly one permission class applies: the owner bits of a root-owned
+  file, the group bits of a gid-0 file, otherwise the *other* bits. A caller-owned file must be
+  `o+rw`; a root-owned one `u+rw`. `./sim` and `generic_capture.py` refuse it otherwise and name
+  the `chmod`. Keep it in a `0700` directory (`/run/user/$UID/...`) so only the caller can reach it.
 - **How it crosses:** by path. `./sim` adds `-v <fb0-path>:/run/pfvd/fb0` to `docker run` and
   passes `--fb0 /run/pfvd/fb0` to `generic_capture.py`, which sets `FB0_BIND=/run/pfvd/fb0`; the
   harness (`harness/run-in-harness.sh`) then binds it at `/dev/fb0` inside bwrap. This is the
@@ -65,10 +66,12 @@ All fields little-endian, offsets in bytes:
 | 32 | 8 | `timestamp_ns` | `CLOCK_MONOTONIC` at the last completed frame (one kernel, so host and container clocks agree) |
 | 40 | 24 | reserved | zero |
 
-`seq` is a seqlock. The writer sets it to an odd value before touching `fb0`, and to the next even
-value once the frame is complete, then updates `timestamp_ns`. A reader reads `seq`, copies the
-frame, and reads `seq` again; the copy is whole only if both reads are equal and even. A reader
-that sees `seq` unchanged since its last upload can skip the frame.
+`seq` is a seqlock. The writer sets it to an odd value before touching `fb0` or any header field,
+writes the frame and `timestamp_ns` (and any changed geometry), and as its **last** store (a
+release store) sets `seq` to the next even value. A reader reads `seq` (acquire), copies the
+header fields and frame it uses, and reads `seq` again; the copy and its metadata are whole only
+if both reads are equal and even. A reader that sees `seq` unchanged since its last upload can
+skip the frame.
 
 `width`, `height` and `stride` must agree with the `PF_FB_*` values the app received and with the
 `fb0` file size (`stride * height <= size`). A consumer that finds a mismatch ignores the header

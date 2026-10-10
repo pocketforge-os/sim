@@ -32,6 +32,16 @@ def capture_raw(path, out, w, h):
     os.replace(tmp, out)
 
 
+def sandbox_can_rw(uid, gid, mode):
+    """True when the bwrap app (uid 0, gid 0, no capabilities) may open a file read+write.
+
+    With no DAC override, the kernel applies exactly one permission class: owner if uid matches,
+    else group if gid matches, else other.
+    """
+    bits = (mode >> 6) if uid == 0 else (mode >> 3) if gid == 0 else mode
+    return bits & 0o6 == 0o6
+
+
 def prepare_fb0(external, w, h, work):
     """Return the fb0 file the harness binds at /dev/fb0.
 
@@ -47,11 +57,12 @@ def prepare_fb0(external, w, h, work):
     if not os.path.isfile(external):
         raise RuntimeError(f"--fb0 {external} does not exist (the caller creates and sizes it)")
     st = os.stat(external)
-    # The app runs as uid 0 with bwrap's dropped capabilities: no DAC override, so a caller-owned
-    # file is opened under its "other" bits even though this supervisor (with caps) could open it.
-    if st.st_uid != 0 and st.st_mode & 0o006 != 0o006:
-        raise RuntimeError(f"--fb0 {external} (mode {st.st_mode & 0o777:o}) is not readable+writable "
-                           "by the sandboxed app; fix: chmod o+rw on the host file")
+    # The app runs as uid 0 with bwrap's dropped capabilities: no DAC override, so the file's mode
+    # decides even though this supervisor (with caps) could open it.
+    if not sandbox_can_rw(st.st_uid, st.st_gid, st.st_mode):
+        cls = "u" if st.st_uid == 0 else "g" if st.st_gid == 0 else "o"
+        raise RuntimeError(f"--fb0 {external} (owner {st.st_uid}:{st.st_gid}, mode {st.st_mode & 0o777:o}) is not "
+                           f"readable+writable by the sandboxed app; fix: chmod {cls}+rw on the host file")
     have = st.st_size
     if have < need:
         raise RuntimeError(f"--fb0 {external} is {have} bytes; this device needs {need} ({w}x{h} XRGB8888)")

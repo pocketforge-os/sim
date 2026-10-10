@@ -31,6 +31,12 @@ class RunAppCli(unittest.TestCase):
         fake = self.bin / "docker"
         fake.write_text(f"#!/bin/sh\necho \"$@\" >> {shlex.quote(str(self.docker_log))}\nexit 97\n")
         fake.chmod(0o755)
+        # `stat` shim: FAKE_STAT=<uid gid mode> stands in for a root-/gid-0-owned fb0 the test
+        # cannot create without root; unset, it is the real stat.
+        shim = self.bin / "stat"
+        shim.write_text('#!/bin/sh\n[ -n "$FAKE_STAT" ] && { echo "$FAKE_STAT"; exit 0; }\nexec /usr/bin/stat "$@"\n')
+        shim.chmod(0o755)
+        self.fake_stat = None
         self.cwd = d / "cwd"; self.cwd.mkdir()
 
     def tearDown(self):
@@ -38,6 +44,9 @@ class RunAppCli(unittest.TestCase):
 
     def run_app(self, *flags):
         env = dict(os.environ, PATH=f"{self.bin}:{os.environ['PATH']}", NO_COLOR="1")
+        env.pop("FAKE_STAT", None)
+        if self.fake_stat:
+            env["FAKE_STAT"] = self.fake_stat
         return subprocess.run([str(SIM), "run-app", "a133", str(self.app), *flags],
                               cwd=self.cwd, env=env, text=True, capture_output=True)
 
@@ -110,6 +119,19 @@ class RunAppCli(unittest.TestCase):
         self.fb0.chmod(0o604)
         self.assert_rejected(["--fb0-path", str(self.fb0), "--print-cmd"], "chmod o+rw")
 
+    def test_fb0_path_permission_class_follows_owner(self):
+        # Positive and negative controls for each class the kernel applies to uid 0 without caps.
+        for stat_out, ok, fix in (("0 0 600", True, None), ("0 0 400", False, "chmod u+rw"),
+                                  ("0 0 200", False, "chmod u+rw"), ("0 0 066", False, "chmod u+rw"),
+                                  ("1000 0 660", True, None), ("1000 0 606", False, "chmod g+rw"),
+                                  ("1000 1000 606", True, None), ("1000 1000 660", False, "chmod o+rw")):
+            with self.subTest(stat=stat_out):
+                self.fake_stat = stat_out
+                if ok:
+                    self.printed("--fb0-path", str(self.fb0))
+                else:
+                    self.assert_rejected(["--fb0-path", str(self.fb0), "--print-cmd"], fix)
+
     def test_rejects_fb0_path_directory(self):
         self.assert_rejected(["--fb0-path", self.tmp.name, "--print-cmd"], "--fb0-path")
 
@@ -157,6 +179,15 @@ class ExternalFramebuffer(unittest.TestCase):
         path = self.write_fb(bytes(32), 0o600)
         with self.assertRaisesRegex(RuntimeError, "chmod o\\+rw"):
             self.gc.prepare_fb0(path, 4, 2, self.tmp.name)
+
+    def test_sandbox_permission_class(self):
+        can = self.gc.sandbox_can_rw
+        self.assertTrue(can(0, 0, 0o600)); self.assertTrue(can(1000, 1000, 0o606))
+        self.assertTrue(can(1000, 0, 0o660))
+        for uid, gid, mode in ((0, 0, 0o400), (0, 0, 0o200), (0, 0, 0o000), (0, 0, 0o066),
+                               (1000, 0, 0o606), (1000, 1000, 0o660), (1000, 1000, 0o604)):
+            with self.subTest(uid=uid, gid=gid, mode=oct(mode)):
+                self.assertFalse(can(uid, gid, mode))
 
     def test_short_external_buffer_is_rejected(self):
         path = self.write_fb(bytes(31))

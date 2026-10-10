@@ -50,7 +50,7 @@ truncate -s $((1280*720*4)) /run/user/$(id -u)/pfvd/fb0 && chmod o+rw /run/user/
 
 | Flag | Effect |
 |------|--------|
-| `--fb0-path <host-file>` | Bind the caller's existing, pre-sized file at `/dev/fb0` (via `/run/pfvd/fb0` and `FB0_BIND`) instead of a private buffer. Never created or truncated; must be `o+rw` (the sandboxed app has no capabilities). Change detection is by polling; see [`FB0-SIDECAR.md`](FB0-SIDECAR.md). |
+| `--fb0-path <host-file>` | Bind the caller's existing, pre-sized file at `/dev/fb0` (via `/run/pfvd/fb0` and `FB0_BIND`) instead of a private buffer. Never created or truncated; must be `o+rw` (`u+rw` if root-owned): the sandboxed app is uid 0 with no capabilities. Change detection is by polling; see [`FB0-SIDECAR.md`](FB0-SIDECAR.md). |
 | `--no-synth` | Do not give the container `/dev/uinput` or the host `/dev/input` tree. Needs at least one `--input-device`. |
 | `--input-device /dev/input/eventN` | Pass exactly this host node with `--device` (repeatable). Only with `--no-synth`. |
 | `--print-cmd` | Print the exact `docker run` argument list, shell-quoted on one line, and exit. No docker call, no build, no `sim-capture/`. |
