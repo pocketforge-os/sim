@@ -15,7 +15,7 @@ container entrypoint the CI gate runs, with the exact caps the nested bwrap+qemu
 | Command | What it does |
 |---------|--------------|
 | `./sim run <device>` | Boot one virtual device and run its **headless logical suite** (control + sensor + skin). The dev inner-loop. |
-| `./sim run-app <device> <arm64-bin> [--shot file.ppm\|--window] [-- args…]` | Attach a generic `/dev/fb0`, run any arm64 binary under qemu-tsp, and composite its pixels into the skin. |
+| `./sim run-app <device> <arm64-bin> [--shot file.ppm\|--window] [--fb0-path file] [--no-synth --input-device /dev/input/eventN] [--print-cmd] [-- args…]` | Attach a generic `/dev/fb0`, run any arm64 binary under qemu-tsp, and composite its pixels into the skin. |
 | `./sim gui [device]` | Open the **clickable `.scad`-rendered skin** — press the bezel, watch the control light. Live X11 window on a display host; autonomous Xvfb self-test when headless. Default `a133`. |
 | `./sim check [devices…]` | The **full CI matrix**, exactly as [`sim-gate.yml`](../.github/workflows/sim-gate.yml) runs it (control + sensor + skin). With **no args** the device list **and** per-device posture (blocking / advisory / excluded) are **data-driven from `platform/ci-matrix.toml`** (read via `pf caps matrix` inside the image) — so a device added to that matrix runs here with no CLI change. Naming devices runs just those, hard. Run this before you push. |
 | `./sim devices` | List the virtual devices this image can run. |
@@ -38,6 +38,22 @@ The binary needs no simulator request/response protocol: it opens and mmaps `/de
 The simulator exposes `PF_FB_WIDTH`, `PF_FB_HEIGHT`, and `PF_FB_STRIDE` (bytes); pixels
 are XRGB8888. Capture uses a fixed cadence. `--shot` is the offscreen CI form and
 `--window` is the live X11 form. Raw and composited artifacts appear in `sim-capture/`.
+
+Host-owned screen and input (for a host viewer such as pfvd):
+
+```bash
+truncate -s $((1280*720*4)) /run/user/$(id -u)/pfvd/fb0 && chmod o+rw /run/user/$(id -u)/pfvd/fb0
+./sim run-app a133 ./my-app.arm64 --fb0-path /run/user/$(id -u)/pfvd/fb0 \
+  --no-synth --input-device /dev/input/event7
+./sim run-app a133 ./my-app.arm64 --fb0-path … --print-cmd   # print the docker run argv, run nothing
+```
+
+| Flag | Effect |
+|------|--------|
+| `--fb0-path <host-file>` | Bind the caller's existing, pre-sized file at `/dev/fb0` (via `/run/pfvd/fb0` and `FB0_BIND`) instead of a private buffer. Never created or truncated; must be `o+rw` (`u+rw` if root-owned): the sandboxed app is uid 0 with no capabilities. Change detection is by polling; see [`FB0-SIDECAR.md`](FB0-SIDECAR.md). |
+| `--no-synth` | Do not give the container `/dev/uinput` or the host `/dev/input` tree. Needs at least one `--input-device`. |
+| `--input-device /dev/input/eventN` | Pass exactly this host node with `--device` (repeatable). Only with `--no-synth`. |
+| `--print-cmd` | Print the exact `docker run` argument list, shell-quoted on one line, and exit. No docker call, no build, no `sim-capture/`. |
 
 ## Requirements (and the errors that name them)
 
