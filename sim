@@ -6,7 +6,7 @@
 # gets an AVD-style loop with ZERO hand-set env vars and ZERO host toolchain:
 #
 #     ./sim run a133        # boot one virtual device, run its headless logical suite
-#     ./sim gui a133        # the clickable .scad-rendered skin — press the bezel, watch it light
+#     ./sim gui a133        # the clickable .scad-rendered skin (deprecated: pfvd --platform <checkout>)
 #     ./sim check           # the full CI matrix (data-driven from platform), exactly as sim-gate.yml runs it
 #
 # It is a THIN, honest wrapper: every command below is the same container entrypoint (`pf-sim …`) the
@@ -210,8 +210,13 @@ cmd_check() { # the full CI matrix, exactly as sim-gate.yml runs it (data-driven
   return "$rc"
 }
 
+# D9: the 2D skin window is deprecated in favour of pfvd's 3D window (pocketforge-os/pfvd). Printed
+# by `sim gui` before anything else and in the help; the command itself is unchanged.
+GUI_DEPRECATION="./sim gui is deprecated: use pfvd, the 3D device simulator (pfvd --platform <platform checkout>; https://github.com/pocketforge-os/pfvd). sim gui still works as before."
+
 cmd_gui() {
   local device="${1:-a133}"
+  warn "$GUI_DEPRECATION"
   need_docker; need_uinput; build_demo; validate_devices "$DEMO_IMAGE" "$device"
   if [ -n "${DISPLAY:-}" ] && xdpyinfo_ok; then
     # DISPLAY PATH (chosen): forward the host X11 unix socket + xauth cookie INTO the container. We do
@@ -448,6 +453,7 @@ ${BOLD}COMMANDS${RST}
   ${GRN}gui${RST} [device]       Open the clickable .scad-rendered skin — press the bezel and watch
                      the control light up. Live X11 window on a display host; falls back
                      to an autonomous Xvfb self-test when headless. ${DIM}default: a133${RST}
+                     ${YEL}Deprecated: use pfvd${RST} (the 3D simulator): ${DIM}pfvd --platform <checkout>${RST}
   ${GRN}run-app${RST} <device> <arm64-bin|bundled:name> [--shot file.ppm|--window] [-- args…]
                      Attach a generic /dev/fb0, run the binary under qemu-tsp, and composite its
                      pixels into the device skin. No app-specific snapshot protocol is required.
