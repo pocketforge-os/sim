@@ -2,6 +2,7 @@
 """Run a native or arm64 app with a shared XRGB8888 fb0 and capture/composite it."""
 import argparse
 import os
+import stat
 import subprocess
 import sys
 import tempfile
@@ -42,21 +43,38 @@ def sandbox_can_rw(uid, gid, mode):
     return bits & 0o6 == 0o6
 
 
-def prepare_fb0(external, w, h, work):
+def prepare_fb0(external, w, h, work, ident=None):
     """Return the fb0 file the harness binds at /dev/fb0.
 
     Default: a private, pre-sized buffer inside ``work``. With ``external`` (``./sim run-app
     --fb0-path``) the caller owns the file and its size; it is used as-is and never created or
     truncated here, because a host reader may already have it mapped (truncating would SIGBUS it).
+    ``ident`` is the ``dev:ino`` the host checked; a different inode here means the path was
+    swapped before docker bound it, and is refused.
     """
     need = w * h * 4
     if external is None:
         fb = os.path.join(work, "fb0")
         with open(fb, "wb") as f: f.truncate(need)
         return fb
-    if not os.path.isfile(external):
-        raise RuntimeError(f"--fb0 {external} does not exist (the caller creates and sizes it)")
-    st = os.stat(external)
+    # Every check reads one fstat of one open: O_PATH needs no read permission and never blocks on
+    # a FIFO. Inside the container the path is a bind mount, so the inode checked is the one bound.
+    missing = f"--fb0 {external} does not exist (the caller creates and sizes it)"
+    try:
+        fd = os.open(external, os.O_PATH | os.O_CLOEXEC)
+    except FileNotFoundError:
+        raise RuntimeError(missing) from None
+    except OSError as e:
+        raise RuntimeError(f"--fb0 {external} cannot be opened: {e.strerror}") from None
+    try:
+        st = os.fstat(fd)
+    finally:
+        os.close(fd)
+    if not stat.S_ISREG(st.st_mode):
+        raise RuntimeError(missing)
+    if ident is not None and f"{st.st_dev}:{st.st_ino}" != ident:
+        raise RuntimeError(f"--fb0 {external} is device:inode {st.st_dev}:{st.st_ino}, not the {ident} ./sim "
+                           f"checked: the host file was replaced after the host check; re-run ./sim run-app")
     # The app runs as uid 0 with bwrap's dropped capabilities: no DAC override, so the file's mode
     # decides even though this supervisor (with caps) could open it.
     if not sandbox_can_rw(st.st_uid, st.st_gid, st.st_mode):
@@ -93,6 +111,7 @@ def main():
     ap.add_argument("--frame", required=True); ap.add_argument("--shot"); ap.add_argument("--window", action="store_true")
     ap.add_argument("--skin-render"); ap.add_argument("--cadence-ms", type=int, default=50)
     ap.add_argument("--fb0", help="caller-owned fb0 file to bind instead of a private buffer")
+    ap.add_argument("--fb0-ident", help="dev:ino the host checked for --fb0 (set by ./sim run-app)")
     ap.add_argument("app_args", nargs=argparse.REMAINDER)
     a = ap.parse_args()
     if a.app_args[:1] == ["--"]:
@@ -105,7 +124,7 @@ def main():
         # fb-render's memfd, while providing the pathname bwrap requires on supported CI.
         # --fb0 substitutes a caller-owned file (docs/FB0-SIDECAR.md).
         try:
-            fb = prepare_fb0(a.fb0, w, h, work)
+            fb = prepare_fb0(a.fb0, w, h, work, a.fb0_ident)
         except RuntimeError as e:
             ap.error(str(e))
         env = os.environ.copy(); env.update(PF_FB_WIDTH=str(w), PF_FB_HEIGHT=str(h), PF_FB_STRIDE=str(w*4))

@@ -287,20 +287,25 @@ cmd_run_app() {
   # Screen: --fb0-path replaces generic_capture's private buffer with a caller-owned host file.
   # The caller sizes it; it is never created or truncated here.
   if [ -n "$fb0_path" ]; then
-    [ -f "$fb0_path" ] || die "--fb0-path must name an existing regular file (got: $fb0_path)
-    Fix: create it first, e.g. truncate -s \$((W*H*4)) $fb0_path"
-    fb0_path="$(readlink -f "$fb0_path")"
+    # One stat of the resolved path gives type, owner, mode and dev:ino from the same inode. docker
+    # -v binds by path, so the dev:ino goes to generic_capture as --fb0-ident and a file swapped in
+    # before the bind is refused before the app starts (docs/FB0-SIDECAR.md "Check, then bind").
+    local fb0_uid="" fb0_gid="" fb0_mode="" fb0_ident="" fb0_type="" fb0_class fb0_bits fb0_real
+    fb0_real="$(readlink -f -- "$fb0_path")" &&
+      read -r fb0_uid fb0_gid fb0_mode fb0_ident fb0_type < <(stat -L -c '%u %g %a %d:%i %F' -- "$fb0_real" 2>/dev/null) || true
+    case "$fb0_type" in "regular file"|"regular empty file") ;; *)
+      die "--fb0-path must name an existing regular file (got: $fb0_path)
+    Fix: create it first, e.g. truncate -s \$((W*H*4)) $fb0_path" ;; esac
+    fb0_path="$fb0_real"
     # The sandboxed app is uid 0 / gid 0 with every capability dropped by bwrap: no DAC override,
     # so exactly one permission class applies (owner if root-owned, else group if gid 0, else other).
-    local fb0_uid fb0_gid fb0_mode fb0_class fb0_bits
-    read -r fb0_uid fb0_gid fb0_mode < <(stat -c '%u %g %a' "$fb0_path")
     if [ "$fb0_uid" = "0" ]; then fb0_class=u; fb0_bits=$(( (8#$fb0_mode >> 6) & 6 ))
     elif [ "$fb0_gid" = "0" ]; then fb0_class=g; fb0_bits=$(( (8#$fb0_mode >> 3) & 6 ))
     else fb0_class=o; fb0_bits=$(( 8#$fb0_mode & 6 )); fi
     [ "$fb0_bits" -eq 6 ] || die "--fb0-path $fb0_path (owner $fb0_uid:$fb0_gid, mode $fb0_mode) is not readable+writable by the sandboxed app (uid 0 without capabilities).
     Fix: chmod $fb0_class+rw $fb0_path   (keep it inside a 0700 directory such as /run/user/\$(id -u)/pfvd)"
     docker_args+=(-v "$fb0_path:$RUN_APP_FB0")
-    args=(--fb0 "$RUN_APP_FB0" "${args[@]}")
+    args=(--fb0 "$RUN_APP_FB0" --fb0-ident "$fb0_ident" "${args[@]}")
   fi
   if [ "$window" = "1" ] && [ "$print_cmd" = "0" ]; then
     [ -n "${DISPLAY:-}" ] && xdpyinfo_ok || die "--window needs a reachable X display; use --shot for headless capture"
