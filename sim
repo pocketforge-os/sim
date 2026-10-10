@@ -290,6 +290,11 @@ cmd_run_app() {
     [ -f "$fb0_path" ] || die "--fb0-path must name an existing regular file (got: $fb0_path)
     Fix: create it first, e.g. truncate -s \$((W*H*4)) $fb0_path"
     fb0_path="$(readlink -f "$fb0_path")"
+    # The sandboxed app is uid 0 with every capability dropped by bwrap, so a file owned by the
+    # caller is opened under its "other" permission bits.
+    local fb0_uid fb0_mode; read -r fb0_uid fb0_mode < <(stat -c '%u %a' "$fb0_path")
+    [ "$fb0_uid" = "0" ] || [ $(( 8#$fb0_mode & 8#006 )) -eq 6 ] || die "--fb0-path $fb0_path (mode $fb0_mode) is not readable+writable by the sandboxed app (uid 0 without capabilities).
+    Fix: chmod o+rw $fb0_path   (keep it inside a 0700 directory such as /run/user/\$(id -u)/pfvd)"
     docker_args+=(-v "$fb0_path:$RUN_APP_FB0")
     args=(--fb0 "$RUN_APP_FB0" "${args[@]}")
   fi

@@ -25,7 +25,7 @@ class RunAppCli(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory(prefix="pf-run-app-cli-")
         d = Path(self.tmp.name)
         self.app = d / "app.arm64"; self.app.write_bytes(b"\x7fELF")
-        self.fb0 = d / "fb0"; self.fb0.write_bytes(bytes(16))
+        self.fb0 = d / "fb0"; self.fb0.write_bytes(bytes(16)); self.fb0.chmod(0o666)
         self.bin = d / "bin"; self.bin.mkdir()
         self.docker_log = d / "docker-called"
         fake = self.bin / "docker"
@@ -103,6 +103,13 @@ class RunAppCli(unittest.TestCase):
         self.assert_rejected(["--fb0-path", str(self.fb0) + ".absent", "--print-cmd"],
                              "--fb0-path")
 
+    def test_rejects_fb0_path_the_sandboxed_app_cannot_write(self):
+        # The app is uid 0 with no capabilities inside bwrap: a caller's 0600 file is EACCES.
+        self.fb0.chmod(0o600)
+        self.assert_rejected(["--fb0-path", str(self.fb0), "--print-cmd"], "chmod o+rw")
+        self.fb0.chmod(0o604)
+        self.assert_rejected(["--fb0-path", str(self.fb0), "--print-cmd"], "chmod o+rw")
+
     def test_rejects_fb0_path_directory(self):
         self.assert_rejected(["--fb0-path", self.tmp.name, "--print-cmd"], "--fb0-path")
 
@@ -133,18 +140,26 @@ class ExternalFramebuffer(unittest.TestCase):
         self.assertEqual(os.path.dirname(fb), self.tmp.name)
         self.assertEqual(os.path.getsize(fb), 4 * 2 * 4)
 
-    def test_external_buffer_is_used_unchanged(self):
+    def write_fb(self, data, mode=0o666):
         path = os.path.join(self.tmp.name, "fb0")
         with open(path, "wb") as f:
-            f.write(b"\x11" * 64)
+            f.write(data)
+        os.chmod(path, mode)
+        return path
+
+    def test_external_buffer_is_used_unchanged(self):
+        path = self.write_fb(b"\x11" * 64)
         self.assertEqual(self.gc.prepare_fb0(path, 4, 2, "/nonexistent-work"), path)
         with open(path, "rb") as f:
             self.assertEqual(f.read(), b"\x11" * 64, "an external fb0 must never be truncated")
 
+    def test_external_buffer_without_other_rw_is_rejected(self):
+        path = self.write_fb(bytes(32), 0o600)
+        with self.assertRaisesRegex(RuntimeError, "chmod o\\+rw"):
+            self.gc.prepare_fb0(path, 4, 2, self.tmp.name)
+
     def test_short_external_buffer_is_rejected(self):
-        path = os.path.join(self.tmp.name, "fb0")
-        with open(path, "wb") as f:
-            f.write(bytes(31))
+        path = self.write_fb(bytes(31))
         with self.assertRaisesRegex(RuntimeError, "31 bytes.*32"):
             self.gc.prepare_fb0(path, 4, 2, self.tmp.name)
 

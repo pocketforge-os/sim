@@ -9,6 +9,7 @@ R5c §2.2 (screen, F2) and §2.3 (input, F3).
 ```bash
 mkdir -p /run/user/$(id -u)/pfvd
 truncate -s $((1280*720*4)) /run/user/$(id -u)/pfvd/fb0        # the caller creates + sizes it
+chmod o+rw /run/user/$(id -u)/pfvd/fb0                          # the sandboxed app must open it
 ./sim run-app a133 ./app.arm64 --fb0-path /run/user/$(id -u)/pfvd/fb0
 ```
 
@@ -17,6 +18,10 @@ truncate -s $((1280*720*4)) /run/user/$(id -u)/pfvd/fb0        # the caller crea
   `generic_capture.py` **never create or truncate** a `--fb0-path` file: a reader may already have
   it mapped, and shrinking a mapped file gives that reader `SIGBUS`. A missing file, a directory,
   or a file shorter than the device needs is a named error before the app starts.
+- **Permissions:** inside bwrap the app is uid 0 with every capability dropped, so it opens a
+  caller-owned file under the file's *other* bits. The file must be `o+rw` (or root-owned);
+  `./sim` refuses it otherwise. Keep it in a `0700` directory (`/run/user/$UID/...`) so only the
+  caller can reach it.
 - **How it crosses:** by path. `./sim` adds `-v <fb0-path>:/run/pfvd/fb0` to `docker run` and
   passes `--fb0 /run/pfvd/fb0` to `generic_capture.py`, which sets `FB0_BIND=/run/pfvd/fb0`; the
   harness (`harness/run-in-harness.sh`) then binds it at `/dev/fb0` inside bwrap. This is the

@@ -46,7 +46,13 @@ def prepare_fb0(external, w, h, work):
         return fb
     if not os.path.isfile(external):
         raise RuntimeError(f"--fb0 {external} does not exist (the caller creates and sizes it)")
-    have = os.path.getsize(external)
+    st = os.stat(external)
+    # The app runs as uid 0 with bwrap's dropped capabilities: no DAC override, so a caller-owned
+    # file is opened under its "other" bits even though this supervisor (with caps) could open it.
+    if st.st_uid != 0 and st.st_mode & 0o006 != 0o006:
+        raise RuntimeError(f"--fb0 {external} (mode {st.st_mode & 0o777:o}) is not readable+writable "
+                           "by the sandboxed app; fix: chmod o+rw on the host file")
+    have = st.st_size
     if have < need:
         raise RuntimeError(f"--fb0 {external} is {have} bytes; this device needs {need} ({w}x{h} XRGB8888)")
     return external
