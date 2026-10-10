@@ -152,7 +152,7 @@ stale (both jobs are in platform's `.github/workflows/skin-drift.yml`):
 | `skins/<id>/body.png`, `body_lit.png` (+ `body_<view>.png`, `body_lit_<view>.png`) | `render.py --write` / `--write-views` | `check-skin-drift.py` (`skin-drift`): hashes in `model-render.json` |
 | `skins/<id>/model-render.json` rects + `display_rect` | `render.py --write` | `check-skin-drift.py` (`skin-drift`): equal to the descriptor `[skin.parts]` |
 | `skins/<id>/model.glb` + `model-glb.json` | `export_gltf.py --write` | `check-skin-drift.py` (`skin-drift`): hashes, glb nodes == `CONTROL_IDS` == `[skin.parts]`; `export_gltf.py --check` + Khronos validator (`skin-drift-glb`) |
-| `skins/<id>/views/{front,back,left,right,top,bottom}.png` | `render_glb_views.py` | `check-skin-drift.py` (`skin-drift`) and `--views-only` (`skin-drift-glb`): hashes in `model-glb.json["views"]`, recorded against the committed glb |
+| `skins/<id>/views/{front,back,left,right,top,bottom}.png` | `render_glb_views.py` | `check-skin-drift.py` (`skin-drift`) and `--views-only` (`skin-drift-glb`): hashes in `model-glb.json["views"]`, recorded against the committed glb and `render_glb_views.py` |
 
 pfvd pins platform, so a model fix reaches pfvd through a `platform.pin` bump (a one-line PR),
 and the coordinator refreshes the pfvd Model review artifact from the committed
