@@ -3,9 +3,8 @@
 # assert the headless contract for BOTH descriptors, with the IDENTICAL arm64 binary under
 # qemu-tsp+bubblewrap AND the native x86 build (byte-identical-frame parity). NO crun.
 #
-# Compiles hwprobe-lite (the app that reads the synth uinput + lights the pressed control onto a
-# virtual fb), then runs check-control.py (the CI-gate entrypoint) under sudo (uinput + the
-# bound event nodes are root-only).
+# Compiles hwprobe-lite (the app that reads private input-event streams and lights the pressed
+# control onto a virtual fb), then runs check-control.py without host input access.
 #
 # Env:
 #   QEMU_TSP  qemu-tsp/build/qemu-tsp/qemu-aarch64                       (required)
@@ -20,7 +19,8 @@ SDLR="${SDLR:?set SDLR (baked in the pocketforge-sim image)}"
 ROOTFS="${ROOTFS:?set ROOTFS (baked in the pocketforge-sim image)}"
 PLATFORM="${PLATFORM:?set PLATFORM (baked in the pocketforge-sim image)}"
 DEVICES="${DEVICES:-a133 a523}"
-WORK="$(mktemp -d)"; trap 'rm -rf "$WORK"' EXIT
+WORK="$(mktemp -d "${RUNNER_TEMP:-/tmp}/pf-control.XXXXXX")"
+trap 'find "$WORK" -mindepth 1 -delete; rmdir "$WORK"' EXIT
 
 echo "== compile hwprobe-lite (SDL3-render: x86 + static arm64) =="
 gcc -O2 -I"$SDLR/x86/include" -o "$WORK/hwprobe-lite.x86" "$HERE/hwprobe-lite.c" \
@@ -29,9 +29,7 @@ aarch64-linux-gnu-gcc -O2 -static -I"$SDLR/arm64/include" -o "$WORK/hwprobe-lite
     "$SDLR/arm64/lib/libSDL3.a" -lm -ldl -lpthread -lrt
 echo "   $(file "$WORK/hwprobe-lite.arm64" | cut -d, -f1-2)"
 
-sudo modprobe uinput 2>/dev/null || true
-
 echo "== drive control surface + assert (check-control.py) =="
-sudo env APP_X86="$WORK/hwprobe-lite.x86" APP_ARM64="$WORK/hwprobe-lite.arm64" \
+env APP_X86="$WORK/hwprobe-lite.x86" APP_ARM64="$WORK/hwprobe-lite.arm64" \
      QEMU_TSP="$QEMU_TSP" ROOTFS="$ROOTFS" PLATFORM="$PLATFORM" \
      python3 "$HERE/check-control.py" $DEVICES

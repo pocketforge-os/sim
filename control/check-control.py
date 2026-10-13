@@ -13,8 +13,8 @@ asserts the headline contract plus the full input/capability matrix:
 
   MATRIX (generic over [[inputs]]):
     * every digital control: press -> its region lights, a DIFFERENT region stays dark;
-      release -> clears. (Proves the id->code->event->decode->render binding end-to-end
-      through real uinput->evdev->qemu-tsp, not faked host-side.) The TrimUI L2/R2 are DIGITAL
+      release -> clears. (Proves the descriptor id->code->input_event->decode->render binding,
+      with Linux input-core filtering in the private writer.) The TrimUI L2/R2 are DIGITAL
       buttons (tsp-5p1), so they ride this same path -> press lights trig_l/trig_r, release clears.
     * d-pad hat: deflect -> lit; centre -> dark.
     * analog stick: deflect past deadzone -> lit; centre -> dark.

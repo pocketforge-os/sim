@@ -10,7 +10,7 @@ off-hardware against the IDENTICAL arm64 app. A **client of the .5 control surfa
 The v0 capability facade is an **in-process library** that reads sensors via **IIO sysfs directly**
 (infra-101: "direct evdev/**IIO**/FF/sysfs"; R-A locks v0 in-process — there is no out-of-process
 broker until Phase-2, so a "broker IPC" path would invent a protocol E2 hasn't landed). So the sim
-synthesizes a **virtual IIO device** — the sensor analog of .3's synthesized uinput:
+synthesizes a **virtual IIO device** — the sensor analog of .3's private input-event transport:
 
 - `physical_model.py` — the ONE rigid-body state (orientation + position + angular velocity) →
   derived **accel** (gravity reaction projected into the device frame) + **gyro** (angular

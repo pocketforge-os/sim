@@ -1,11 +1,10 @@
 // hwprobe-lite.c — tsp-an4.5: the IDENTICAL arm64 OCI app the control surface drives.
 //
-// This is the tiny app that makes the headline contract REAL: it BOTH reads the descriptor-
-// synthesized uinput device (the .3 device, bound in at /dev/input) AND lights the pressed
-// control onto a virtual framebuffer (the .4 software-render path). The host injects via the
-// control surface (writes the uinput device), tells this app to snapshot, and asserts the
-// region colour — so "press(south) lights btn_south" is proven end-to-end THROUGH real
-// uinput->evdev->qemu-tsp ioctl translation, not faked by the host.
+// This tiny app proves the descriptor -> input_event -> render binding: it reads a private event
+// stream, lights the mapped control in the software framebuffer, and snapshots the result. The
+// FIFO writer applies Linux 6.8 input-core disposition semantics before records reach this reader.
+// The separate synth/ and spike3/ probes own real uinput->evdev->qemu-user ioctl translation;
+// physical-device fidelity belongs to pfvd's full-system QEMU tier.
 //
 // It is descriptor-driven with ZERO per-device code: the host writes a layout.txt (computed by
 // layout.py from capabilities.toml) listing the evdev nodes + each control's canvas rect +
@@ -15,7 +14,7 @@
 // Coordination is a FIFO request/response handshake (no cross-pid-ns signals): the host writes
 // "snap <ppm-path>" -> this app drains pending evdev events, updates control state, software-
 // renders the canvas, writes the PPM, replies "ok". "quit" -> "bye" + exit. Injection always
-// happens-before the snap, and uinput->evdev delivery is synchronous, so the drain is race-free.
+// happens-before the snap, and FIFO delivery is synchronous, so the drain is race-free.
 //
 // HONESTY (see ../docs/HONESTY-CONTRACT.md): upstream SDL3 SOFTWARE rasterizer to a memfd fb,
 // tsp-osr-safe recipe (SDL_CreateSoftwareRenderer on a surface — no window/GL). Proves the

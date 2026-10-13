@@ -58,6 +58,7 @@ as a dropped one, for every device.
 | `probe_evdev.py` | sim-owned EVIOCG* dumper (E1 capture shape), decoded via `evdev_codes.py` |
 | `check-synth.py` | per-device assertions: round-trip EXACT, node topology/omission, probe-diff, SDL, native==qemu |
 | `selftest-check-synth.py` | **negative control** for `check-synth.py` section B — hermetic (no descriptor checkout, no `/dev/uinput`, no qemu); shows the check goes RED for its own stated reasons and stays GREEN on the rows that must not be weakened |
+| `selftest-host-input-safety.py` | Hermetic positive/negative proof that ordinary descriptors reach mocked uinput setup while power/sleep/suspend/restart/wakeup/lid/dock descriptors fail before `/dev/uinput` open or ioctl |
 | `run-synth.sh` | end-to-end matrix runner on a host with `/dev/uinput` + `qemu-tsp` + SDL3 (runs the selftest as a device-free preflight) |
 
 The `evdev_codes.py` table is **generated, never hand-typed** — kernel ABI numbers are

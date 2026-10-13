@@ -10,6 +10,13 @@ The PocketForge virtual device simulator (epic **tsp-an4 / infra-104 / E5**) pro
 - accessibility-preference propagation (e.g. `hapticsEnabled` off → silent no-op);
 - per-variant button/skin coverage (a133 vs a523 = data, not code).
 
+The control gate proves the descriptor → Linux `input_event` → render binding, including the
+Linux 6.8 input-core rules implemented by its private event writer: capability filtering, key/axis
+state suppression, fuzz handling, packet flush behavior, and real timestamps. It does **not** put
+those events through a kernel evdev device. The real uinput → evdev → qemu-user ioctl-translation
+proof remains in `synth/` and `spike3/`; physical-device input fidelity belongs to pfvd's
+full-system QEMU tier.
+
 The generic `run-app` display path additionally proves that XRGB8888 bytes an arm64
 binary writes to its attached `/dev/fb0` are observed by the host capture supervisor and
 placed in the descriptor-defined display rectangle of the existing skin compositor. Its

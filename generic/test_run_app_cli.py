@@ -114,12 +114,13 @@ class RunAppCli(unittest.TestCase):
         self.assertIn(needle, r.stderr)
         self.assertFalse(self.docker_log.exists(), f"{flags} reached docker before failing")
 
-    def test_default_keeps_synth_caps_and_private_fb0(self):
-        # Negative control for --no-synth: without it the in-container synthesiser path stays.
+    def test_default_uses_private_input_and_private_fb0(self):
         argv = self.printed()
         joined = " ".join(argv)
-        self.assertIn("--device /dev/uinput", joined)
-        self.assertIn("-v /dev/input:/dev/input", joined)
+        self.assertNotIn("/dev/uinput", joined)
+        self.assertNotIn("/dev/input:/dev/input", joined)
+        self.assertNotIn("--device-cgroup-rule", joined)
+        self.assertIn("--cap-add SYS_ADMIN", joined)
         self.assertNotIn("/run/pfvd/fb0", joined)
         self.assertEqual(argv[argv.index("pocketforge-sim:demo"):][:3],
                          ["pocketforge-sim:demo", "run-app", "a133"])
@@ -151,10 +152,10 @@ class RunAppCli(unittest.TestCase):
         self.assertNotIn("/dev/input/event12", " ".join(a))
         devices = [a[i + 1] for i, t in enumerate(a) if t == "--device"]
         self.assertEqual(devices, ["/dev/input/event7"])
-        # Negative control: the synthesising default needs the wildcard (its nodes appear at
-        # run time) and keeps docker's default capabilities.
+        # Negative control: the private default also has no wildcard and passes no host node.
         d = self.printed()
-        self.assertEqual(d[d.index("--device-cgroup-rule"):][:2], ["--device-cgroup-rule", "c 13:* rmw"])
+        self.assertNotIn("--device-cgroup-rule", d)
+        self.assertNotIn("--device", d)
         self.assertNotIn("--cap-drop", d)
 
     def test_fb0_path_binds_host_file_and_passes_it_to_capture(self):
@@ -343,13 +344,18 @@ class InContainerRunApp(unittest.TestCase):
         r = self.harness(absent)
         self.assertNotEqual(r.returncode, 0)
         self.assertIn(f"{absent} is absent", r.stderr)
-        self.assertIn("--input-device", r.stderr)
         self.assertEqual(self.called(), "", "bwrap must not start without /dev/input")
         # Positive control: the same run with the directory present reaches bwrap and binds it.
         present = Path(self.tmp.name) / "input"; present.mkdir()
         r = self.harness(present)
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn(f"--dev-bind {present} /dev/input", self.called())
+
+    def test_harness_without_input_gets_an_empty_private_directory(self):
+        r = subprocess.run([str(ROOT / "harness" / "run-in-harness.sh"), str(self.app)],
+                           env=self.env, text=True, capture_output=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("--dir /dev/input", self.called())
 
     def test_harness_binds_the_header_beside_fb0(self):
         present = Path(self.tmp.name) / "input"; present.mkdir()

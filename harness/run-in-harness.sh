@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # run-in-harness.sh — the SHARED sim launcher: run an arm64 binary under qemu-tsp+binfmt
 # inside BUBBLEWRAP against the arm64 rootfs (owner decision: NO crun/cgroups/seccomp). The
-# bottom seam (/dev/input) is bound from the host so the in-sandbox app sees the VDB's
-# uinput device. This is the lightweight ns/chroot stand-in for crun; the app binary is
+# bottom seam (/dev/input) is a session-private input-event directory (or an empty directory for
+# a generic app with no input). This is the lightweight ns/chroot stand-in for crun; the app is
 # identical to what real crun would run, so the launcher swaps to crun later unchanged.
 #
 #   Usage:  QEMU_TSP=... ROOTFS=... run-in-harness.sh /host/path/to/arm64bin [args...]
-# Needs sudo (the uinput event node is root-only). The binary is bound in at /app.
+# The binary is bound in at /app.
 set -euo pipefail
 QEMU_TSP="${QEMU_TSP:?set QEMU_TSP (baked in the pocketforge-sim image; see docker/README.md)}"
 ROOTFS="${ROOTFS:?set ROOTFS=/path/to/rootfs-arm64}"
@@ -25,14 +25,15 @@ if [ "$sim_frame" = "1" ] && [ -z "${FB0_BIND:-}" ]; then
     Fix: run through './sim run-app ... -- --sim-frame', or set FB0_BIND to a writable framebuffer file."
 fi
 
-# The app's input devices: the host /dev/input tree (default run) or exactly the session's nodes
-# (`./sim run-app --no-synth`, where docker creates /dev/input/eventN per --device). A container
-# given no node has no /dev/input at all; name that instead of bwrap's "Can't find source path".
-# PF_INPUT_DIR overrides the bind source (the hermetic tests use it); the app always sees /dev/input.
-INPUT_DIR="${PF_INPUT_DIR:-/dev/input}"
-[ -d "$INPUT_DIR" ] || die "$INPUT_DIR is absent in this container: a session needs at least one input node.
-    Fix: run through './sim run-app' (default: synthesised input), pass the session's nodes with
-    './sim run-app --no-synth --input-device /dev/input/eventN', or give 'docker run' a '--device /dev/input/eventN'."
+# Device sessions explicitly supply their private input directory. Generic apps with no input get
+# an empty /dev/input. An explicitly configured missing directory remains an actionable error.
+INPUT_BIND=()
+if [ -n "${PF_INPUT_DIR:-}" ]; then
+  [ -d "$PF_INPUT_DIR" ] || die "$PF_INPUT_DIR is absent in this container: PF_INPUT_DIR must name this session's input directory."
+  INPUT_BIND=(--dev-bind "$PF_INPUT_DIR" /dev/input)
+else
+  INPUT_BIND=(--dir /dev/input)
+fi
 
 # Optional WRITABLE artifact egress: OUT_BIND=<hostdir> exposes it at /out so the headless
 # app can write a framebuffer dump (tsp-an4.4) the host then reads. Used by .5/E7 too.
@@ -65,7 +66,7 @@ fi
 exec bwrap \
   --bind "$ROOTFS" / \
   --dev /dev \
-  --dev-bind "$INPUT_DIR" /dev/input \
+  "${INPUT_BIND[@]}" \
   --ro-bind "$QEMU_TSP" /qemu-tsp \
   --ro-bind "$BIN" /app \
   "${EXTRA[@]}" \

@@ -52,40 +52,29 @@ expired. That flag is what makes the pin reproducible **forever**, not a workaro
 
 ## Run — the nested-container caps (the `tsp-qc1.2` spike verdict)
 
-The sim nests cleanly. The launcher inside the container must (1) create the bwrap sandbox namespaces,
-(2) do its `mount`/`pivot_root` dance, (3) open `/dev/uinput` to synthesize the device, and (4) read the
-synthesized **event node** — which the kernel creates on the **host's** devtmpfs, so the container has to
-see it. Empirically (modelmaker, Docker 29.1.3) the **minimal verified** run — meaningfully lighter than
-`--privileged` — is:
+The sim nests cleanly. The launcher only needs to create bwrap namespaces and do its
+`mount`/`pivot_root` dance. Input-event FIFOs stay inside the container; neither host `/dev/input`
+nor `/dev/uinput` is exposed. The minimal run is:
 
 ```bash
 docker run --rm \
-  --device /dev/uinput \
-  --device-cgroup-rule "c 13:* rmw" \
-  -v /dev/input:/dev/input \
   --cap-add SYS_ADMIN \
   --security-opt apparmor=unconfined \
   --security-opt seccomp=unconfined \
   pocketforge-sim check-control a133 a523
 ```
 
-(`--privileged` also works as the superset — it mounts a full devtmpfs so the event node appears natively
-and disables the device cgroup.) Why each knob:
+Why each knob:
 
 | Flag | Gate it opens |
 |------|---------------|
-| `--device /dev/uinput` | exposes the uinput control node (device create) |
-| `-v /dev/input:/dev/input` | the synthesized `eventN` lands on the **host** devtmpfs; the bind makes it visible (the app reads it directly on the native path, and bwrap `--dev-bind`s it on the qemu path) |
-| `--device-cgroup-rule "c 13:* rmw"` | Docker's default device cgroup denies major-13 (input) char devices; this allows the dynamically-created event nodes |
 | `--cap-add SYS_ADMIN` | Docker's default **seccomp** gates namespace creation on `CAP_SYS_ADMIN` |
 | `--security-opt apparmor=unconfined` | the default **AppArmor** profile denies bwrap's `mount`/`pivot_root` |
 | `--security-opt seccomp=unconfined` | belt-and-braces for `pivot_root`/mount syscalls under the bwrap dance |
 
-The host's `uinput` kernel module must be loaded (`modprobe uinput`). Lowering the host
-`kernel.apparmor_restrict_unprivileged_userns` sysctl does **not** help the nested-Docker case (that knob
-governs bwrap on the host, not inside a container) — no persistent host change is needed. Binding
-`/dev/input` exposes the host's real input devices to the container — acceptable on a dedicated sim/CI host;
-note it as a caveat. Rootless/podman is an untested follow-up caveat.
+Lowering the host `kernel.apparmor_restrict_unprivileged_userns` sysctl does **not** help the
+nested-Docker case (that knob governs bwrap on the host, not inside a container). No persistent host
+change is needed. Rootless/podman is an untested follow-up caveat.
 
 ### `run-app` with host-owned screen and input (pfvd, tsp-h5ed.46.4)
 
@@ -103,9 +92,7 @@ The cap set changes only for input; the bwrap knobs stay:
 
 | Default `run-app` | With `--no-synth --input-device /dev/input/eventN` |
 |-------------------|------------------------------------------------------|
-| `--device /dev/uinput` | **dropped**: the host created the uinput device; the container cannot create more |
-| `-v /dev/input:/dev/input` | **replaced** by one `--device /dev/input/eventN` per node (repeat `--input-device`), so the container sees only this session's nodes and two sessions do not see each other's pads |
-| `--device-cgroup-rule "c 13:* rmw"` | **dropped**, and `--cap-drop MKNOD` added: with the wildcard and docker's default `CAP_MKNOD` the container could `mknod` and open any input node, including another session's. The per-node `--device` entries already allow exactly the passed nodes (tsp-h5ed.46.28) |
+| Empty private `/dev/input`; no input device flags | One `--device /dev/input/eventN` per node (repeat `--input-device`), plus `--cap-drop MKNOD`, so the container sees only this session's caller-owned nodes |
 | `--cap-add SYS_ADMIN`, `apparmor=unconfined`, `seccomp=unconfined` | unchanged (bwrap still needs them; its `--dev-bind /dev/input` exposes exactly the passed nodes) |
 
 `--fb0-path <host-file>` adds `-v <host-file>:/run/pfvd/fb0`; inside the container
@@ -118,8 +105,8 @@ at `/run/pfvd/fb0.hdr` (the harness puts it at `/dev/fb0.hdr`) where an in-conta
 publish it. `--input-device` without `--no-synth`, and `--no-synth` without an `--input-device`,
 are errors. Every `run-app` adds `--init`, and `generic_capture.py` forwards SIGTERM/SIGINT to
 the app, so `docker stop` lets it exit cleanly. A container with no
-input node at all has no `/dev/input`, and the harness refuses it by name rather than letting
-bwrap fail on the missing bind source. `./sim check` and the CI gate keep the default cap set.
+input node gets an empty private `/dev/input`. `./sim check` and the CI gate never receive a host
+input node.
 
 ## Commands
 
@@ -144,7 +131,7 @@ BYTE-IDENTICAL** — now from a clean image with no hand-staged artifacts, on an
 `check-control` + `check-sensor` + `check-skin` nested, on every PR to `main`, over the
 data-driven device matrix above (the `check-skin` suite joined the gate in tsp-65jc.1 / infra-113 A1).
 It runs on the **self-hosted Dell device-lab runner** (org runner `trimui-build-lab`; labels
-`self-hosted`+`docker`) because the nested sim needs `/dev/uinput` + the scoped cap set above. No
+`self-hosted`+`docker`) because the nested sim needs Docker plus the scoped bwrap cap set above. No
 ghcr push (build-then-run; the versioned-image publish is designed but owner-gated — see
 [`../docs/IMAGE-PUBLISHING.md`](../docs/IMAGE-PUBLISHING.md)).
 
@@ -184,12 +171,12 @@ does ("GUI click == headless inject", live). A picker click switches device.
 docker build --target demo -t pocketforge-sim:demo .          # base + video SDL3 + Xvfb
 
 # Autonomous proof (no display needed — Xvfb): live X11 window opens + the driver loop lights controls
-docker run --rm --device /dev/uinput --device-cgroup-rule "c 13:* rmw" -v /dev/input:/dev/input \
+docker run --rm \
   --cap-add SYS_ADMIN --security-opt apparmor=unconfined --security-opt seccomp=unconfined \
   pocketforge-sim:demo window-selftest a523
 
 # Live demo on a host with a real X display (e.g. the laptop) — click the bezel, watch it light:
-docker run --rm --device /dev/uinput --device-cgroup-rule "c 13:* rmw" -v /dev/input:/dev/input \
+docker run --rm \
   --cap-add SYS_ADMIN --security-opt apparmor=unconfined --security-opt seccomp=unconfined \
   -e DISPLAY="$DISPLAY" -v /tmp/.X11-unix:/tmp/.X11-unix \
   pocketforge-sim:demo window a523

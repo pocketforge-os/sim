@@ -91,6 +91,36 @@ def _UI_GET_SYSNAME(length):
 UINPUT_MAX_NAME_SIZE = 80
 ABS_CNT = 0x40  # 64
 
+# systemd 255 logind's button_suitable() set, plus KEY_WAKEUP as a fail-closed
+# forward-compatibility guard. These names must never be registered on a host-visible
+# uinput device by the simulator. plan() remains the semantic descriptor model.
+HOST_ACTION_NAMES = frozenset({
+    "KEY_POWER", "KEY_POWER2", "KEY_SLEEP", "KEY_SUSPEND", "KEY_RESTART", "KEY_WAKEUP",
+    "SW_LID", "SW_DOCK",
+})
+LOGIND_HOST_ACTION_KEYS = frozenset(
+    ec.KEY[n] for n in ("KEY_POWER", "KEY_POWER2", "KEY_SLEEP", "KEY_SUSPEND", "KEY_RESTART")
+    if n in ec.KEY
+)
+
+
+class HostActionRefused(RuntimeError):
+    """A host-visible uinput operation tried to register or emit a host-action code."""
+
+
+def host_action_inputs(desc):
+    """Return {input id: dangerous names}, without requiring code resolution.
+
+    String-level detection means a future KEY_/SW_ addition fails closed even before the
+    generated evdev-code table learns that name.
+    """
+    out = {}
+    for inp in desc.get("inputs", []):
+        names = [n for n in inp.get("code", "").split(",") if n in HOST_ACTION_NAMES]
+        if names:
+            out[inp["id"]] = names
+    return out
+
 
 def _signed32(op):
     """fcntl.ioctl wants the request as a signed 32-bit int; READ-dir ops set bit 31."""
@@ -267,11 +297,23 @@ class Synth:
     def __init__(self, desc, uinput_path="/dev/uinput"):
         self.desc = desc
         self.uinput_path = uinput_path
-        self.specs, self.resolver = plan(desc)
+        self._host_actions = host_action_inputs(desc)
+        # Inspect dangerous names before numeric resolution: a newly recognized host-action name
+        # must fail closed even if this checkout's generated evdev table does not know its code.
+        if self._host_actions:
+            self.specs, self.resolver = [], {}
+        else:
+            self.specs, self.resolver = plan(desc)
         self._fds = {}            # role -> fd
         self._node_for_role = {}  # role -> node path
 
     def create(self):
+        if self._host_actions:
+            detail = "; ".join(
+                f"{input_id}: {','.join(names)}"
+                for input_id, names in sorted(self._host_actions.items()))
+            raise HostActionRefused(
+                f"host-visible uinput refuses descriptor before open: {detail}")
         for spec in self.specs:
             fd = os.open(self.uinput_path, os.O_RDWR | os.O_NONBLOCK)
             _ioc(fd, UI_SET_EVBIT, ec.EV["EV_SYN"])
@@ -306,6 +348,9 @@ class Synth:
         self._emit(role, ec.EV["EV_SYN"], ec.SYN["SYN_REPORT"], 0)
 
     def _r(self, input_id):
+        if input_id in self._host_actions:
+            raise HostActionRefused(
+                f"host-visible uinput refuses {input_id}: {','.join(self._host_actions[input_id])}")
         r = self.resolver.get(input_id)
         if r is None:
             raise KeyError(f"no input '{input_id}' in descriptor")
@@ -369,6 +414,118 @@ class Synth:
                 pass
             os.close(fd)
         self._fds.clear()
+
+
+class FifoSynth(Synth):
+    """Userspace input-event transport with Linux 6.8 input-core disposition semantics.
+
+    The suite reader only consumes ``struct input_event`` records. Keeping these records in a
+    private FIFO avoids registering a host-kernel device while preserving the filtering that
+    ``input_get_disposition()`` and ``input_event_dispose()`` apply before evdev handlers run.
+    """
+
+    def __init__(self, desc, input_dir, *, clock_ns=time.time_ns):
+        self.desc = desc
+        self.input_dir = input_dir
+        self.specs, self.resolver = plan(desc)
+        self._host_actions = {}
+        self._fds = {}
+        self._node_for_role = {}
+        self._clock_ns = clock_ns
+        self._write = os.write
+        self._key_state = {}
+        self._abs_state = {}
+        self._pending = {spec.role: False for spec in self.specs}
+        self._spec_for_role = {spec.role: spec for spec in self.specs}
+
+    def create(self):
+        os.makedirs(self.input_dir, exist_ok=True)
+        for index, spec in enumerate(self.specs):
+            node = os.path.join(self.input_dir, f"event{index}")
+            if os.path.lexists(node):
+                os.unlink(node)
+            os.mkfifo(node, 0o600)
+            fd = os.open(node, os.O_RDWR | os.O_NONBLOCK)
+            spec.node = node
+            self._fds[spec.role] = fd
+            self._node_for_role[spec.role] = node
+            for code in spec.keys:
+                self._key_state[(spec.role, code)] = False
+            for code in spec.abs:
+                self._abs_state[(spec.role, code)] = 0
+        return self
+
+    @staticmethod
+    def _defuzz(value, old, fuzz):
+        """Linux 6.8 input_defuzz_abs_event(), including C truncation toward zero."""
+        def cdiv(number, divisor):
+            return (abs(number) // divisor) * (-1 if number < 0 else 1)
+
+        if fuzz:
+            if old - fuzz // 2 < value < old + fuzz // 2:
+                return old
+            if old - fuzz < value < old + fuzz:
+                return cdiv(old * 3 + value, 4)
+            if old - fuzz * 2 < value < old + fuzz * 2:
+                return cdiv(old + value, 2)
+        return value
+
+    def _write_record(self, role, etype, code, value):
+        now = self._clock_ns()
+        data = struct.pack("<qqHHi", now // 1_000_000_000,
+                           (now % 1_000_000_000) // 1_000, etype, code, value)
+        if self._write(self._fds[role], data) != len(data):
+            raise OSError("partial input-event write")
+
+    def _emit(self, role, etype, code, value):
+        spec = self._spec_for_role[role]
+        if etype == ec.EV["EV_KEY"]:
+            if code not in spec.keys:
+                return False
+            state_key = (role, code)
+            if value != 2:
+                down = bool(value)
+                if self._key_state[state_key] == down:
+                    return False
+                self._key_state[state_key] = down
+        elif etype == ec.EV["EV_ABS"]:
+            if code not in spec.abs:
+                return False
+            state_key = (role, code)
+            old = self._abs_state[state_key]
+            # Linux input core uses fuzz here. ``flat`` is metadata for consumers such as
+            # joydev and does not alter the raw input_event stream.
+            value = self._defuzz(value, old, spec.abs[code][2])
+            if value == old:
+                return False
+            self._abs_state[state_key] = value
+        elif etype == ec.EV["EV_SYN"] and code == ec.SYN["SYN_REPORT"]:
+            if not self._pending[role]:
+                return False
+            self._write_record(role, etype, code, value)
+            self._pending[role] = False
+            return True
+        else:
+            return False
+
+        self._write_record(role, etype, code, value)
+        self._pending[role] = True
+        return True
+
+    def destroy(self):
+        for fd in list(self._fds.values()):
+            os.close(fd)
+        self._fds.clear()
+        for node in list(self._node_for_role.values()):
+            try:
+                os.unlink(node)
+            except FileNotFoundError:
+                pass
+        self._node_for_role.clear()
+        try:
+            os.rmdir(self.input_dir)
+        except OSError:
+            pass
 
 
 def _inject_demo(synth):
