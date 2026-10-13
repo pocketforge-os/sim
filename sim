@@ -28,13 +28,9 @@ DEMO_IMAGE="${SIM_DEMO_IMAGE:-pocketforge-sim:demo}"
 # Adding a device to CI = adding platform data (a descriptor auto-joins as advisory), never a
 # workflow edit.
 
-# The IRREDUCIBLE nested-sim caps (docker/README.md): create bwrap namespaces (SYS_ADMIN under the
-# default seccomp), do mount/pivot_root (unconfined apparmor+seccomp), open the uinput control node,
-# and see the host-devtmpfs event node the kernel creates on major-13 (the device-cgroup-rule + bind).
+# The nested-sim caps (docker/README.md) are only for bwrap namespaces and mount/pivot_root. Input
+# is a container-private FIFO directory: no host /dev/input bind, /dev/uinput, or device wildcard.
 SIM_CAPS=(
-  --device /dev/uinput
-  --device-cgroup-rule "c 13:* rmw"
-  -v /dev/input:/dev/input
   --cap-add SYS_ADMIN
   --security-opt apparmor=unconfined
   --security-opt seccomp=unconfined
@@ -63,12 +59,6 @@ need_docker() {
     fi
     die "the docker daemon is not reachable.
     Fix: start it — 'sudo systemctl start docker' (or launch Docker Desktop) — then re-run."
-  fi
-}
-need_uinput() {
-  if [ ! -e /dev/uinput ]; then
-    die "/dev/uinput is missing — the sim synthesizes the device through the uinput kernel module.
-    Fix: load it on the HOST — 'sudo modprobe uinput'  (add 'uinput' to /etc/modules to persist)."
   fi
 }
 # The nested sim runs as root INSIDE the container (PID-1 root), so no host root is needed for the app
@@ -127,7 +117,7 @@ run_suites_over() { # <devices...> — control+sensor+skin over the devices; ret
   return "$rc"
 }
 run_headless() { # <devices...> — build+validate, run the full matrix HARD (failure => nonzero)
-  need_docker; need_uinput; build_base; validate_devices "$IMAGE" "$@"
+  need_docker; build_base; validate_devices "$IMAGE" "$@"
   local rc=0
   run_blocking_prepasses || rc=$?
   run_suites_over "$@" || rc=$?
@@ -175,7 +165,7 @@ cmd_check() { # the full CI matrix, exactly as sim-gate.yml runs it (data-driven
     # platform ci-matrix.toml — NOT a hardcoded list. blocking-device failures BLOCK (nonzero
     # exit => the required check goes red); advisory-device failures REPORT but do not block;
     # excluded devices never run. Adding a device = adding platform data, never editing this CLI.
-    need_docker; need_uinput; build_base
+    need_docker; build_base
     local blocking advisory excluded
     blocking="$(matrix_ids blocking)"; advisory="$(matrix_ids advisory)"; excluded="$(matrix_ids excluded)"
     if [ -z "$blocking$advisory" ]; then
@@ -217,7 +207,7 @@ GUI_DEPRECATION="./sim gui is deprecated: use pfvd, the 3D device simulator (pfv
 cmd_gui() {
   local device="${1:-a133}"
   warn "$GUI_DEPRECATION"
-  need_docker; need_uinput; build_demo; validate_devices "$DEMO_IMAGE" "$device"
+  need_docker; build_demo; validate_devices "$DEMO_IMAGE" "$device"
   if [ -n "${DISPLAY:-}" ] && xdpyinfo_ok; then
     # DISPLAY PATH (chosen): forward the host X11 unix socket + xauth cookie INTO the container. We do
     # NOT build a native-host GUI (that would drag the video SDL3 + skin-render-window build back onto
@@ -308,29 +298,17 @@ cmd_run_app() {
       *) die "sim run-app: unknown flag '$arg' (put app arguments after --)" ;;
     esac
   done
-  # Input: by default the container gets the uinput control node + the host /dev/input tree
-  # (SIM_CAPS). --no-synth is the host-synthesised form (R5c F3): the caller created the uinput
-  # device(s) and passes exactly their event nodes; the container never sees /dev/uinput.
-  # It also drops the major-13 cgroup wildcard and CAP_MKNOD: with both, a container could mknod
-  # and open ANY input node, including another session's. The per-node --device entries already
-  # allow exactly the nodes passed.
+  # Default generic capture gets an empty private /dev/input. --no-synth is the explicit
+  # caller-owned form: it passes only the named existing nodes and never exposes /dev/uinput.
   local caps=("${SIM_CAPS[@]}")
   if [ "$no_synth" = "1" ]; then
     [ "${#inputs[@]}" -gt 0 ] || die "--no-synth needs at least one --input-device /dev/input/eventN (the node(s) you created on the host)"
     caps=()
-    local i=0
-    while [ "$i" -lt "${#SIM_CAPS[@]}" ]; do
-      case "${SIM_CAPS[$i]}" in
-        --device) [ "${SIM_CAPS[$((i+1))]}" = /dev/uinput ] && { i=$((i+2)); continue; } ;;
-        --device-cgroup-rule) i=$((i+2)); continue ;;
-        -v) [ "${SIM_CAPS[$((i+1))]}" = /dev/input:/dev/input ] && { i=$((i+2)); continue; } ;;
-      esac
-      caps+=("${SIM_CAPS[$i]}"); i=$((i+1))
-    done
+    caps=("${SIM_CAPS[@]}")
     caps+=(--cap-drop MKNOD)
     for arg in "${inputs[@]}"; do caps+=(--device "$arg"); done
   elif [ "${#inputs[@]}" -gt 0 ]; then
-    die "--input-device needs --no-synth (without it the container synthesises its own device through /dev/uinput)"
+    die "--input-device needs --no-synth (the default session has private modeled input)"
   fi
   if [ "$no_frame" = "1" ]; then
     [ "$shot$window" = "00" ] || die "--no-frame writes no frame.ppm; --shot and --window composite it (drop one)"
@@ -393,7 +371,7 @@ cmd_build() {
 }
 
 cmd_shell() { # interactive debug shell inside the (base or demo) container
-  need_docker; need_uinput
+  need_docker
   local img="$IMAGE"; [ "${1:-}" = "demo" ] && { build_demo; img="$DEMO_IMAGE"; } || build_base
   step "interactive shell in ${img} (the nested sim caps are attached)"
   docker run --rm -it "${SIM_CAPS[@]}" "$img" shell
@@ -409,8 +387,7 @@ cmd_doctor() { # preflight only — the "is this host ready?" report
     else printf '  %s docker NOT installed — https://docs.docker.com/engine/install/\n' "${RED}✗${RST}" >&2; ok=0; fi
   if docker info >/dev/null 2>&1; then printf '  %s docker daemon reachable (no sudo needed)\n' "${GRN}✓${RST}" >&2
     else printf '  %s docker daemon NOT reachable — start it or add yourself to the docker group\n' "${RED}✗${RST}" >&2; ok=0; fi
-  if [ -e /dev/uinput ]; then printf '  %s /dev/uinput present\n' "${GRN}✓${RST}" >&2
-    else printf '  %s /dev/uinput MISSING — sudo modprobe uinput\n' "${RED}✗${RST}" >&2; ok=0; fi
+  printf '  %s input transport is container-private (host /dev/uinput not used)\n' "${GRN}✓${RST}" >&2
   if [ -n "${DISPLAY:-}" ] && xdpyinfo_ok; then printf '  %s X display reachable (%s) — sim gui runs LIVE\n' "${GRN}✓${RST}" "$DISPLAY" >&2
     else printf '  %s no X display — sim gui falls back to the Xvfb self-test (headless)\n' "${YEL}•${RST}" >&2; fi
   [ "$ok" = "1" ] || die "not ready — fix the ✗ items above."
@@ -479,7 +456,7 @@ ${BOLD}EXAMPLES${RST}
   ./sim check                  # what CI will decide — run before you push
   SIM_IMAGE=pocketforge-sim:ci-42 ./sim check --rm-image   # CI form (unique tag, clean up)
 
-${BOLD}REQUIREMENTS${RST}  docker (in your group, or sudo) · the host 'uinput' module (sudo modprobe uinput).
+${BOLD}REQUIREMENTS${RST}  docker (in your group, or sudo). Host input devices are not used.
 The nested sim runs as root ${BOLD}inside${RST} the container, so no host root is needed for the app.
 Zero env vars to set — the image bakes every pinned path. ${DIM}HONESTY: docs/HONESTY-CONTRACT.md${RST}
 EOF

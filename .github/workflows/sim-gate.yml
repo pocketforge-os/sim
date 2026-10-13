@@ -14,8 +14,8 @@ name: sim-gate
 # on modelmaker, OFF the arbitration host per infra-113 Option B — tsp-65jc.24). Same self-hosted
 # docker-root, org-authored-only posture as the retired Dell `trimui-build-lab` target; the
 # confinement invariant below is unchanged.
-# It needs /dev/uinput + the scoped cap set from docker/README.md (the
-# tsp-qc1.2 nesting verdict) — lighter than --privileged, no host AppArmor change. No ghcr push
+# It needs only the scoped bwrap cap set from docker/README.md; input stays container-private.
+# This remains lighter than --privileged, with no host AppArmor change. No ghcr push
 # (build-then-run, per the owner decision).
 #
 # ═══════════════════ GATE SCOPE · HONESTY CONTRACT · POSTURE · FORK-SKIP (infra-113 B1) ═══════════════════
@@ -68,8 +68,8 @@ name: sim-gate
 # SECURITY POSTURE (tsp-j5y, 2026-07-03). This job runs PR-authored code on a self-hosted runner
 # that has docker host-root + the elevated container cap set below (SYS_ADMIN + unconfined
 # apparmor/seccomp) — those caps are IRREDUCIBLE: the nested bwrap sandbox must create namespaces
-# and do mount/pivot_root, and the suite needs the host `/dev/uinput` + evdev nodes, so this cannot
-# run on a GitHub-hosted runner and the caps cannot be dropped without breaking the tsp-qc1.2
+# and do mount/pivot_root. The suite does not receive host input devices. This cannot
+# run on a GitHub-hosted runner and the namespace caps cannot be dropped without breaking the
 # verdict. The untrusted-code exposure is instead confined by three layers (tsp-j5y; hardened by
 # tsp-20u1, the build-lab confinement invariant — "trimui-build-lab never executes fork/public-PR
 # code", canonical doc in mission-control BUILD_PIPELINE.md):
@@ -115,17 +115,14 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4 (repo requires SHA-pinned actions)
 
-      - name: Ensure uinput module (host node is required for the nested sim)
-        run: sudo modprobe uinput || true
-
       # infra-113 C1 (D7): the gate runs the LITERAL same entrypoint a developer runs — `./sim check`
       # — so CI and the dev inner-loop cannot silently drift (the product guarantee this epic exists
       # to enforce; an equivalence note would be a proxy that can drift). `./sim check` (NO device
       # args) BUILDS the pinned image (network ON — apt + pinned clones), then derives the device
       # list + per-device posture DATA-DRIVEN from the baked platform's ci-matrix.toml (infra-113 B4
       # / D6, `pf-sim matrix`) and runs check-control + check-sensor + check-skin over them with the
-      # exact nested-sim caps (--device /dev/uinput, --device-cgroup-rule "c 13:* rmw",
-      # -v /dev/input:/dev/input, --cap-add SYS_ADMIN, unconfined apparmor+seccomp — docker/README.md,
+      # exact nested-sim caps (--cap-add SYS_ADMIN, unconfined apparmor+seccomp; no host input
+      # devices or mounts — docker/README.md,
       # the tsp-qc1.2 nesting verdict) and --network none on the RUN phase. check-skin rides the same
       # CLI (it joined the gate in tsp-65jc.1/A1 — the PR's own run proves the .scad clickable skin
       # green on the runner).

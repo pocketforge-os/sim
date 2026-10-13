@@ -26,6 +26,8 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 # red for their stated reasons, a green matrix run below would mean nothing.
 echo "== preflight: check-synth.py negative control (selftest-check-synth.py) =="
 python3 "$HERE/selftest-check-synth.py"
+echo "== preflight: host-action descriptors fail before uinput open (selftest-host-input-safety.py) =="
+python3 "$HERE/selftest-host-input-safety.py"
 
 QEMU_TSP="${QEMU_TSP:?set QEMU_TSP (baked in the pocketforge-sim image; see docker/README.md)}"
 SDLDIR="${SDLDIR:?set SDLDIR (baked in the pocketforge-sim image)}"

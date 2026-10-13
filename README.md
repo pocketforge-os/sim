@@ -14,12 +14,11 @@ Think **Android's AVD, for the PocketForge fleet** — but as a *hard CI gate* t
 
 ## Quickstart — one command, zero env vars
 
-You need **docker** (in your group, or `sudo`) and the host **`uinput`** module
-(`sudo modprobe uinput`). Nothing else — no host toolchain, no paths to set. Then, from a fresh
-clone:
+You need **docker** (in your group, or `sudo`). The suite does not use the host input subsystem.
+Nothing else — no host toolchain, no paths to set. Then, from a fresh clone:
 
 ```bash
-./sim doctor         # is my host ready?  (docker, /dev/uinput, display — each ✗ names its fix)
+./sim doctor         # is my host ready?  (docker, private input, display)
 ./sim doctor --shell-suite # plus deterministic §15.2 MODELED cases and honesty report
 ./sim run a133       # boot one virtual device, run its headless logical suite
 ./sim gui a133       # the clickable .scad-rendered skin (deprecated: pfvd --platform <checkout>)
@@ -47,7 +46,7 @@ Full command reference: [`docs/CLI.md`](docs/CLI.md). New to the project? Start 
 
 | Command | What it does |
 |---------|--------------|
-| `./sim doctor` | Check the host is ready (docker, `/dev/uinput`, display) — each ✗ names its fix. |
+| `./sim doctor` | Check the host is ready (docker, private input transport, display). |
 | `./sim doctor --shell-suite` | Run readiness plus the pinned arm64 launcher/authority cooperative §15.2 suite, per-case PASS, deterministic hashes, and the F13/F14 honesty boundary. |
 | `./sim run <device>` | Boot one virtual device, run its **headless logical suite** (control + sensor + skin). The dev inner-loop. |
 | `./sim gui [device]` | **Deprecated: use [pfvd](https://github.com/pocketforge-os/pfvd)** (`pfvd --platform <platform checkout>`), the 3D device simulator; `sim gui` prints this notice and otherwise works as before. Opens the **clickable `.scad`-rendered skin** — press the bezel, watch the control light. Live X11 window on a display host; autonomous Xvfb self-test when headless. Default `a133`. |
@@ -73,10 +72,10 @@ tonight's a523 (TrimUI Smart Pro S) fold-in as the worked example.
   translates none**) + binfmt, inside **bubblewrap** (lightweight ns/chroot), **NO crun /
   cgroups / seccomp**. This keeps the sim entirely off the unbuilt Phase-2 container substrate;
   the launcher swaps to real crun later — the app binary is identical.
-- The VDB substitutes the **bottom seam only** (kernel device nodes + sensor sources): a
-  `uinput` evdev device advertising exactly the descriptor's codes + `absinfo`, a virtual
+- The VDB substitutes the **bottom seam only** (input-event streams + sensor sources): a
+  private FIFO writer with Linux input-core filtering, a virtual
   `/dev/fb0` (software-render), and broker-backed capability responses. The app cannot tell
-  the sim from a quiet device.
+  the logical model from a quiet device; full physical fidelity belongs to pfvd's QEMU tier.
 - Sim host = **x86** (modelmaker / CI runner), viable **because of** the qemu-tsp fork.
 
 ## The three CI gates it feeds

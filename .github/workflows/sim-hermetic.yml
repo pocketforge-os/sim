@@ -1,7 +1,8 @@
 name: sim-hermetic
 
 # Standalone hermetic unit tests (tsp-h5ed.46.19). `generic/test_run_app_cli.py`,
-# `generic/test_fb_anim.py` and `shell/test_check_shell.py` are not part of `./sim check`, so
+# `generic/test_fb_anim.py`, `shell/test_check_shell.py`, and the uinput safety selftest are not
+# part of `./sim check`, so
 # without this workflow no CI job runs them. NON-GATE: the job name `hermetic-tests` is NOT a required check (the only required
 # context is sim-gate's `headless-suite`, ruleset 19755679); sim-gate.yml and `./sim check` are
 # untouched.
@@ -37,11 +38,14 @@ jobs:
       - name: Build the pinned image (same CLI build as the gate)
         run: SIM_IMAGE="$IMG" ./sim build base
 
-      - name: Hermetic tests (generic/, shell/)
+      - name: Hermetic tests (generic/, shell/, synth/)
         run: |
           docker run --rm --network none --user "$(id -u):$(id -g)" -e HOME=/tmp \
             -e PYTHONDONTWRITEBYTECODE=1 -w /opt/sim --entrypoint python3 "$IMG" \
             -m unittest -v generic/test_run_app_cli.py generic/test_fb_anim.py shell/test_check_shell.py
+          docker run --rm --network none --user "$(id -u):$(id -g)" -e HOME=/tmp \
+            -e PYTHONDONTWRITEBYTECODE=1 -w /opt/sim --entrypoint python3 "$IMG" \
+            synth/selftest-host-input-safety.py
 
       - name: Cleanup CI image
         if: always()

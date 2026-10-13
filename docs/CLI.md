@@ -21,7 +21,7 @@ container entrypoint the CI gate runs, with the exact caps the nested bwrap+qemu
 | `./sim devices` | List the virtual devices this image can run. |
 | `./sim build [base\|demo\|all]` | Build the pinned image(s) without running anything. |
 | `./sim shell [demo]` | Interactive debug shell inside the container (caps attached). |
-| `./sim doctor` | Check the host is ready (docker, `/dev/uinput`, display) — each ✗ names its fix. |
+| `./sim doctor` | Check the host is ready (docker, private input transport, display). |
 | `./sim doctor --shell-suite` | Also run deterministic §15.2 modeled shell transcripts and print the F13/F14 honesty report. |
 | `./sim version` | Show the pinned platform / qemu-tsp / SDL3 refs. |
 
@@ -75,7 +75,7 @@ truncate -s 64 /run/user/$(id -u)/pfvd/fb0.hdr && chmod o+rw /run/user/$(id -u)/
 | `--fb0-path <host-file>` | Bind the caller's existing, pre-sized file at `/dev/fb0` (via `/run/pfvd/fb0` and `FB0_BIND`) instead of a private buffer. Never created or truncated; must be `o+rw` (`u+rw` if root-owned): the sandboxed app is uid 0 with no capabilities. Change detection is by polling; see [`FB0-SIDECAR.md`](FB0-SIDECAR.md). |
 | `--fb0-hdr-path <host-file>` | With `--fb0-path`: bind a second caller-owned file (at least 64 bytes, same permission rule, not the fb0 file itself) at `/dev/fb0.hdr`, and give the app `PF_FB0_HDR=/dev/fb0.hdr`. A producer that knows when a frame is complete (`fb-anim`) publishes the PFB0 seqlock header there; see [`FB0-SIDECAR.md`](FB0-SIDECAR.md). |
 | `--no-frame` | Never convert fb0 into `sim-capture/frame.ppm`. Not with `--shot`/`--window`, which composite it. With `--fb0-path` and no `--window` the capture already skips the 50 ms snapshots and keeps only the frame at a clean exit; `--no-frame` drops that one too. |
-| `--no-synth` | Do not give the container `/dev/uinput` or the host `/dev/input` tree. Also drops the `c 13:* rmw` device-cgroup wildcard and adds `--cap-drop MKNOD`, so the container cannot create and open another session's input node. Needs at least one `--input-device`. |
+| `--no-synth` | Pass caller-owned input instead of the empty/private default. Adds `--cap-drop MKNOD`; needs at least one `--input-device`. |
 | `--input-device /dev/input/eventN` | Pass exactly this host node with `--device` (repeatable). Only with `--no-synth`. |
 | `--print-cmd` | Print the exact `docker run` argument list, shell-quoted on one line, and exit. No docker call, no build, no `sim-capture/`. |
 
@@ -83,7 +83,7 @@ truncate -s 64 /run/user/$(id -u)/pfvd/fb0.hdr && chmod o+rw /run/user/$(id -u)/
 
 - **docker** — installed and reachable (in your `docker` group, or run under `sudo`). A missing daemon
   or a permission error prints the exact fix.
-- **the host `uinput` module** — `sudo modprobe uinput` (the sim synthesizes the device through it).
+- **no host input setup** — the modeled suite transport stays private to the container.
 - **no host root for the app** — the nested sim runs as **root inside the container** (PID-1 root), so
   only docker access is needed. `./sim doctor` reports all of the above up front.
 

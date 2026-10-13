@@ -2,7 +2,7 @@
 # run-skin.sh — tsp-an4.6 end-to-end: prove the CLICKABLE SKIN drives the SAME control surface as
 # the headless inject, for BOTH descriptors, on the IDENTICAL arm64 app under qemu-tsp + native
 # parity (NO crun). Compiles the .5 app (hwprobe-lite) + builds the .6 SDL3 renderer
-# (skin-render), then runs check-skin.py under sudo (uinput + the bound event nodes are root-only).
+# (skin-render), then runs check-skin.py against private input-event streams.
 #
 # Env (mirrors run-control.sh):
 #   QEMU_TSP  qemu-tsp/build/qemu-tsp/qemu-aarch64                            (required)
@@ -18,7 +18,8 @@ SDLR="${SDLR:?set SDLR (baked in the pocketforge-sim image)}"
 ROOTFS="${ROOTFS:?set ROOTFS (baked in the pocketforge-sim image)}"
 PLATFORM="${PLATFORM:?set PLATFORM (baked in the pocketforge-sim image)}"
 DEVICES="${DEVICES:-a133 a523}"
-WORK="$(mktemp -d)"; trap 'rm -rf "$WORK"' EXIT
+WORK="$(mktemp -d "${RUNNER_TEMP:-/tmp}/pf-skin.XXXXXX")"
+trap 'find "$WORK" -mindepth 1 -delete; rmdir "$WORK"' EXIT
 
 echo "== compile hwprobe-lite (.5 app: SDL3-render x86 + static arm64) =="
 gcc -O2 -I"$SDLR/x86/include" -o "$WORK/hwprobe-lite.x86" "$CTRL/hwprobe-lite.c" \
@@ -30,9 +31,7 @@ echo "   $(file "$WORK/hwprobe-lite.arm64" | cut -d, -f1-2)"
 echo "== build skin-render (.6 SDL3 renderer; --shot offscreen path) =="
 SDLR="$SDLR" bash "$HERE/build-skin-render.sh" "$WORK/skin-render"
 
-sudo modprobe uinput 2>/dev/null || true
-
 echo "== drive clickable skin + assert (check-skin.py) =="
-sudo env APP_X86="$WORK/hwprobe-lite.x86" APP_ARM64="$WORK/hwprobe-lite.arm64" \
+env APP_X86="$WORK/hwprobe-lite.x86" APP_ARM64="$WORK/hwprobe-lite.arm64" \
      QEMU_TSP="$QEMU_TSP" ROOTFS="$ROOTFS" PLATFORM="$PLATFORM" SKIN_RENDER="$WORK/skin-render" \
      python3 "$HERE/check-skin.py" $DEVICES

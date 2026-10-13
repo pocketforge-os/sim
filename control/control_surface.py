@@ -7,7 +7,7 @@ the GUI is built ON this API, never the API bolted onto a GUI. This module IS th
 the surface E7's CI scripts drive and the contract that becomes the CI gate (advisory->blocking).
 
 It converges the two prior walls into the real headless device:
-  * .3 (sim/synth/uinput_synth.Synth) — the descriptor->uinput resolver + the injection
+  * .3 (sim/synth/uinput_synth.FifoSynth) — the descriptor->input-event resolver + injection
     primitives (press/release/set_axis/set_stick/move_hat). Digital press -> EV_KEY 1/0; analog
     drag -> EV_ABS scaled across the descriptor min..max; hat -> ABS_HAT0X/Y.
   * .4 (sim/fb software-render) — the app lights the pressed control onto a virtual fb, dumped
@@ -23,9 +23,9 @@ The headline contract this makes real, verbatim, on BOTH descriptors, zero per-d
         dev.press("ltrig");            assert dev.framebuffer_region("ltrig").is_red()  # digital L2
         dev.assert_capability_absent("imu")     # a133 has no IMU; a523 -> present
 
-Run under sudo (uinput + the bound /dev/input event nodes are root-only). Launcher "qemu" runs
-the IDENTICAL arm64 binary under qemu-tsp+bubblewrap (NO crun); "native" runs the x86 build for
-the native==qemu parity check.
+The input-event FIFOs live inside the per-run output directory and never register a host input
+device. Launcher "qemu" runs the IDENTICAL arm64 binary under qemu-tsp+bubblewrap (NO crun);
+"native" runs the x86 build for the native==qemu parity check.
 """
 import os
 import select
@@ -39,7 +39,7 @@ sys.path.insert(0, os.path.join(HERE, "..", "fb"))
 sys.path.insert(0, os.path.join(HERE, "..", "sensor"))
 sys.path.insert(0, HERE)
 
-from uinput_synth import Synth, load_descriptor          # noqa: E402  (the .3 foundation)
+from uinput_synth import FifoSynth, load_descriptor      # noqa: E402  (the .3 foundation)
 from ppm2png import read_ppm                              # noqa: E402  (the .4 PPM reader)
 import layout as L                                        # noqa: E402
 from broker_stub import BrokerStub, HardwareAbsent, PermissionDenied  # noqa: E402
@@ -141,6 +141,7 @@ class Device:
         # the .7 virtual IIO device: synthesized from [[sensors]], driven by the broker's physical
         # model, read by the app at /sys/bus/iio/devices (qemu) / PF_IIO_ROOT (native).
         self.iio_root = os.path.join(self.outdir, "iio")
+        self.input_dir = os.path.join(self.outdir, "input")
         self.iio = IIOSynth(self.desc, self.iio_root)
         self._proc = None
         self._req_fd = self._resp_fd = None
@@ -159,18 +160,19 @@ class Device:
 
     def boot(self):
         os.makedirs(os.path.join(self.outdir, "frames"), exist_ok=True)
-        # 1) synthesize the descriptor's uinput device(s) FIRST so the nodes exist before the
-        #    sandbox binds /dev/input and before the app opens them.
-        self.synth = Synth(self.desc).create()
+        # 1) Create private input-event FIFOs before the app opens its modeled /dev/input.
+        self.synth = FifoSynth(self.desc, self.input_dir).create()
         nodes = [n["node"] for n in self.synth.nodes() if n["node"]]
         if not nodes:
             raise ControlError("synth produced no evdev nodes")
+        layout_nodes = (nodes if self.launcher == "native" else
+                        [os.path.join("/dev/input", os.path.basename(node)) for node in nodes])
         # 1b) synthesize the virtual IIO device from [[sensors]] (no-op when the descriptor has no
         #     imu -> a133 reads hardware-absent). Initialized at the rest pose.
         self.iio.create()
         # 2) write the descriptor-computed layout the app draws from (ONE source of truth).
         with open(os.path.join(self.outdir, "layout.txt"), "w") as f:
-            f.write(L.emit_layout_txt(self.canvas, self.groups, nodes))
+            f.write(L.emit_layout_txt(self.canvas, self.groups, layout_nodes))
         # 3) FIFOs for the snapshot handshake.
         for fifo in ("req", "resp"):
             p = os.path.join(self.outdir, fifo)
@@ -195,7 +197,7 @@ class Device:
             # qemu: bind the synthesized IIO tree at the honest ABI path; the app's default
             # PF_IIO_ROOT=/sys/bus/iio/devices then reads it indistinguishably from hardware.
             env = dict(os.environ, QEMU_TSP=self.qemu_tsp, ROOTFS=self.rootfs, OUT_BIND=self.outdir,
-                       IIO_BIND=self.iio_root)
+                       IIO_BIND=self.iio_root, PF_INPUT_DIR=self.input_dir)
             cmd = ["bash", HARNESS, self.app_arm64, "/out"]
             self._proc = subprocess.Popen(cmd, stderr=self._applog, env=env)
         else:
