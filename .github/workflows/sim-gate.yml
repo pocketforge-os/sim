@@ -115,6 +115,11 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4 (repo requires SHA-pinned actions)
 
+      - name: Uinput execution-domain conformance (mocked openers; no devices)
+        run: |
+          docker build --target uinput-domain-test --label pf.bead=tsp-ihne1.56.1 \
+            -t "$IMG-uinput-domain" .
+
       # infra-113 C1 (D7): the gate runs the LITERAL same entrypoint a developer runs — `./sim check`
       # — so CI and the dev inner-loop cannot silently drift (the product guarantee this epic exists
       # to enforce; an equivalence note would be a proxy that can drift). `./sim check` (NO device
@@ -146,4 +151,4 @@ jobs:
 
       - name: Cleanup CI image
         if: always()
-        run: docker image rm -f "$IMG" || true
+        run: docker image rm -f "$IMG" "$IMG-uinput-domain" || true

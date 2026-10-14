@@ -12,6 +12,7 @@
 #include <signal.h>
 #include <sys/ioctl.h>
 #include <time.h>
+#include "../guard/pf_uinput_domain_guard.h"
 
 static int g_fd = -1;
 
@@ -32,7 +33,13 @@ static void inject(int sig){
 }
 
 int main(){
-  int fd=open("/dev/uinput",O_RDWR|O_NONBLOCK); if(fd<0){perror("open uinput");return 2;}
+  struct pf_uinput_verdict verdict;
+  int fd=pf_uinput_guarded_open("/dev/uinput",O_RDWR|O_NONBLOCK,pf_uinput_real_open,NULL,&verdict);
+  if(fd<0){
+    if(errno==EPERM) fprintf(stderr,"reason=%s domain=%s%s%s\n",verdict.reason,pf_uinput_domain_name(verdict.domain),verdict.probe ? " probe=" : "",verdict.probe ? verdict.probe : "");
+    else perror("open uinput");
+    return 2;
+  }
   g_fd=fd;
   ioctl(fd,UI_SET_EVBIT,EV_KEY);
   int keys[]={BTN_SOUTH,BTN_EAST,BTN_NORTH,BTN_WEST,BTN_TL,BTN_TR,BTN_SELECT,BTN_START,BTN_MODE,BTN_THUMBL,BTN_THUMBR};

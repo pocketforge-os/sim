@@ -65,6 +65,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       libglib2.0-dev zlib1g-dev file \
     && rm -rf /var/lib/apt/lists/*
 
+# P0 uinput-domain safety gate: pure fixture evaluation and counting mock openers.
+# This stage has no device mounts and never runs either creator binary.
+FROM toolchain AS uinput-domain-test
+WORKDIR /src
+COPY . /src
+RUN tests/test_uinput_domain_c.sh \
+ && python3 -m unittest -v tests/test_uinput_domain.py \
+ && python3 tests/uinput_inventory.py --self-test
+
 # ───────────────────────────── qemu-tsp (evdev/uinput ioctl fork) ─────────────────────────────
 FROM toolchain AS qemu
 ARG QEMU_TSP_REPO

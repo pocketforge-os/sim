@@ -11,6 +11,7 @@ from unittest import mock
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import evdev_codes as ec  # noqa: E402
+import uinput_domain_guard as udg  # noqa: E402
 import uinput_synth as us  # noqa: E402
 
 
@@ -30,6 +31,14 @@ DESC = {
     ],
 }
 EVENT = struct.Struct("<qqHHi")
+PFVD_GUEST = udg.Probe(
+    udg.Check.NO,
+    udg.Check.YES,
+    "ok",
+    frozenset(("pocketforge,tsp", "allwinner,sun50i-a133", "allwinner,sun50i-a100")),
+    "missing",
+    "not-probed",
+)
 
 
 def inventory():
@@ -71,7 +80,7 @@ class HostInputSafety(unittest.TestCase):
              mock.patch.object(us, "_ioc") as ioctl_spy, \
              mock.patch.object(us.os, "write", side_effect=lambda _fd, data: len(data)), \
              mock.patch.object(us, "_resolve_node", return_value="/dev/input/event-fixture"):
-            us.Synth(safe_desc).create()
+            us.Synth(safe_desc, opener=open_spy, domain_probe=PFVD_GUEST).create()
             self.assertGreater(open_spy.call_count, 0, "safe positive must exercise uinput open")
             self.assertGreater(ioctl_spy.call_count, 0, "safe positive must exercise ioctl setup")
 

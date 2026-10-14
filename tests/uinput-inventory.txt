@@ -1,0 +1,26 @@
+# Classified kernel-input creation and exposure occurrences.
+# TRANSITIONAL domain=pf-builder-vm: synth/uinput_synth.py and spike3/mkuinput.c;
+# removal/migration is tsp-ihne1.56.5.
+synth/selftest-host-input-safety.py	683a221524dd855aae96392a4afd59991f08b6e5d78a2aca00953a886ffae4c3	# synth/selftest-host-input-safety.py:118 if os.fspath(path) == "/dev/uinput":
+synth/selftest-host-input-safety.py	2639e26b224705f6d33feeb45f84e0be11679f319ee49b85fd6e0d0209c41074	# synth/selftest-host-input-safety.py:119 raise AssertionError("FIFO backend opened /dev/uinput")
+synth/selftest-check-synth.py	59f8cb83a2ce4d7586042317215fa13d34df3dc6d20df0c5a9fe1d5943a9f98f	# synth/selftest-check-synth.py:15 /dev/uinput, no qemu, no network. There is deliberately NO skip path — a missing input FAILS
+synth/run-synth.sh	5d2a4ea5708ade9fc0e2c6ab5768cac7c8517f19ee581872527a9b2456b7f912	# synth/run-synth.sh:2 # run-synth.sh — tsp-an4.3 end-to-end proof on an x86_64 host with /dev/uinput.
+synth/uinput_synth.py	e7e8682c1ed5a0318d5b32f5030052eb00e814cb3d731b4dbb678935a9fa18eb	# synth/uinput_synth.py:36 synth  = Synth(desc); synth.create()    # needs /dev/uinput (root)
+synth/uinput_synth.py	3a88e25a1a9b4b63fd87098954a90eeff99aa95d6bc216b4acac5dde4385474b	# synth/uinput_synth.py:80 UI_DEV_CREATE = _IOC(_IOC_NONE, _U, 1, 0)
+synth/uinput_synth.py	9a5800b0bfdb454476835b5a1b8043b010599b2961b7aa7bc5729868623515f1	# synth/uinput_synth.py:263 # --- create / inject (needs /dev/uinput, root) ------------------------------
+synth/uinput_synth.py	09dd4ed093d9902a11494d10136f03005ac829fc88258ef79676aeee58d8c976	# synth/uinput_synth.py:286 for _ in range(50):  # the eventX child appears just after UI_DEV_CREATE
+synth/uinput_synth.py	5533b4ef6f66d0bc897fa3bdab70041c9c0c2310f8e29093004ea0150096d946	# synth/uinput_synth.py:298 def __init__(self, desc, uinput_path="/dev/uinput", opener=os.open, domain_probe=None):
+synth/uinput_synth.py	e767c67b0dc65db3b35c4bf5efb8ad2e8fe35b90a5670763fad9e19bf20d9ca4	# synth/uinput_synth.py:333 _ioc(fd, UI_DEV_CREATE)
+synth/uinput_synth.py	505c1a16eb19366b3acb9f653535762ec802409ba893d32780499c34c80b1821	# synth/uinput_synth.py:588 p.add_argument("--uinput", default="/dev/uinput")
+spike3/mkuinput.c	52f0ed42dc398c93bb074703822ee68d5636df0008b41d7e43c97bf0e34c2d90	# spike3/mkuinput.c:37 int fd=pf_uinput_guarded_open("/dev/uinput",O_RDWR|O_NONBLOCK,pf_uinput_real_open,NULL,&verdict);
+spike3/mkuinput.c	1e90bee6e50490267cbeb2395c4cb0e18b2c0cca6973594d668e8e362434b2ed	# spike3/mkuinput.c:65 if(ioctl(fd,UI_DEV_CREATE)<0) perror("UI_DEV_CREATE");
+spike3/run-spike3.sh	673c016b039201b0ef2ab3d1c0fe8a0ddf6c31e1256616f38b8ff9afc26d93cf	# spike3/run-spike3.sh:2 # run-spike3.sh — SPIKE-3 (tsp-an4.2) end-to-end proof, on an x86_64 host with /dev/uinput.
+generic/test_fb_anim.py	11242cd63f2953e4dd5c8720c82a5283cef29055d7433fa0f9884f7190f238eb	# generic/test_fb_anim.py:6 No docker, no qemu, no /dev/uinput.
+generic/test_run_app_cli.py	0bb67e16cee3cf9e095a6441845a2a3fcf8e8309366cd1be29b4fb5731240648	# generic/test_run_app_cli.py:4 No docker, no image, no /dev/uinput: `--print-cmd` must print the exact `docker run` argument
+generic/test_run_app_cli.py	bd180098d55c71fb1fe28602e0a7a052225b354c9a0b4bd007632c99e55cf205	# generic/test_run_app_cli.py:120 self.assertNotIn("/dev/uinput", joined)
+generic/test_run_app_cli.py	bd180098d55c71fb1fe28602e0a7a052225b354c9a0b4bd007632c99e55cf205	# generic/test_run_app_cli.py:132 self.assertNotIn("/dev/uinput", joined)
+generic/test_run_app_cli.py	fa526cefeb5ce79100a8d0cf57478d5b65db56a70c63aaba3bc2e1aa1b993425	# generic/test_run_app_cli.py:134 self.assertIn("--device /dev/input/event7 --device /dev/input/event12", joined)
+generic/test_run_app_cli.py	23c409dc79b37dffc9a22c3ed4742a5d1ecc06c1cd9a6a0fc05119d9c640183c	# generic/test_run_app_cli.py:187 self.assert_rejected(["--no-synth", "--input-device", "/dev/uinput", "--print-cmd"],
+docker/entrypoint.sh	4965296e1859a7eedf558241ccd3f11cb5e6c182bfa84aac1c4cf582210be4ef	# docker/entrypoint.sh:14 #                                       # hermetic — no descriptor, no /dev/uinput, no qemu)
+docker/entrypoint.sh	e24452e630436fb3afbb704b6fca0433be7caacd1031f83ccbdd62233086145f	# docker/entrypoint.sh:60 # (tsp-477r). check-synth.py itself needs /dev/uinput + qemu + SDL (run-synth.sh, not this
+.github/workflows/sim-hermetic.yml	404f3632ef04239a05b319d4bec8dcd798de0799b089bd6d168502061affe6d5	# .github/workflows/sim-hermetic.yml:12 # The tests need no device, no /dev/uinput and no caps: they run as the runner's uid with
