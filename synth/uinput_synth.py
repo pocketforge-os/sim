@@ -55,6 +55,7 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import evdev_codes as ec  # noqa: E402
+from uinput_domain_guard import guarded_open  # noqa: E402
 
 try:
     import tomllib
@@ -294,9 +295,11 @@ def _resolve_node(fd):
 class Synth:
     """A descriptor's whole virtual device set + the injection primitives C5 wraps."""
 
-    def __init__(self, desc, uinput_path="/dev/uinput"):
+    def __init__(self, desc, uinput_path="/dev/uinput", opener=os.open, domain_probe=None):
         self.desc = desc
         self.uinput_path = uinput_path
+        self._opener = opener
+        self._domain_probe = domain_probe
         self._host_actions = host_action_inputs(desc)
         # Inspect dangerous names before numeric resolution: a newly recognized host-action name
         # must fail closed even if this checkout's generated evdev table does not know its code.
@@ -315,7 +318,8 @@ class Synth:
             raise HostActionRefused(
                 f"host-visible uinput refuses descriptor before open: {detail}")
         for spec in self.specs:
-            fd = os.open(self.uinput_path, os.O_RDWR | os.O_NONBLOCK)
+            fd = guarded_open(self.uinput_path, os.O_RDWR | os.O_NONBLOCK,
+                              probe=self._domain_probe, opener=self._opener)
             _ioc(fd, UI_SET_EVBIT, ec.EV["EV_SYN"])
             if spec.keys:
                 _ioc(fd, UI_SET_EVBIT, ec.EV["EV_KEY"])
