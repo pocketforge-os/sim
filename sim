@@ -77,7 +77,7 @@ build_demo() {
 
 # ── device discovery + validation (a clean error beats a container traceback) ─────────────────────
 list_devices() { # <image> — the device ids that ship a descriptor in the image
-  docker run --rm "${1:-$IMAGE}" shell -lc 'ls -1 /opt/pf/platform/devices 2>/dev/null | sort' 2>/dev/null
+  docker run --rm -- "${1:-$IMAGE}" shell -lc 'ls -1 /opt/pf/platform/devices 2>/dev/null | sort' 2>/dev/null
 }
 validate_devices() { # <image> <devices...> — die with a helpful list on an unknown device
   local img="$1"; shift
@@ -97,7 +97,7 @@ _net=(); [ "${SIM_NETWORK:-0}" = "1" ] || _net=(--network none)
 run_suite() { # <suite> <devices...>
   local suite="$1"; shift
   step "pf-sim check-${suite} $*  ${DIM}(native x86 == arm64-under-qemu-tsp, byte-identical)${RST}"
-  docker run --rm "${_net[@]}" "${SIM_CAPS[@]}" "$IMAGE" "check-${suite}" "$@"
+  docker run --rm "${_net[@]}" "${SIM_CAPS[@]}" -- "$IMAGE" "check-${suite}" "$@"
 }
 # Device-free blocking pre-passes. They run exactly once per `./sim check`, before any posture rows,
 # so the developer command and CI gate cannot drift and advisory rows do not duplicate their cost.
@@ -105,9 +105,9 @@ run_suite() { # <suite> <devices...>
 # real --sim-frame render/composite assertion; the descriptor negative control remains cheap (~1s).
 run_blocking_prepasses() {
   step "pf-sim selftest-skin-optional  ${DIM}(device-free: optional descriptor fields, tsp-bu5e)${RST}"
-  docker run --rm "${_net[@]}" "$IMAGE" selftest-skin-optional
+  docker run --rm "${_net[@]}" -- "$IMAGE" selftest-skin-optional
   step "pf-sim check-shell  ${DIM}(F12: pinned pf-shell + modeled lifecycle + --sim-frame composite)${RST}"
-  docker run --rm "${_net[@]}" "${SIM_CAPS[@]}" "$IMAGE" check-shell
+  docker run --rm "${_net[@]}" "${SIM_CAPS[@]}" -- "$IMAGE" check-shell
 }
 run_suites_over() { # <devices...> — control+sensor+skin over the devices; return rc (no build/validate)
   local suite rc=0
@@ -131,11 +131,11 @@ matrix_ids() { # <posture> — space-separated device ids at that posture, from 
   # `|| true`: a pre-B4 baked platform has no `matrix` subcommand -> the entrypoint verb execs
   # caps.py which exits 2; we must NOT let that nonzero status kill the caller under `set -e`
   # (it would skip the fail-closed fallback). Empty output => the fallback runs.
-  docker run --rm "$IMAGE" matrix list --posture "$1" --format ids 2>/dev/null || true
+  docker run --rm -- "$IMAGE" matrix list --posture "$1" --format ids 2>/dev/null || true
 }
 caps_descriptor_devices() { # descriptor'd devices in the image (NOT all devices/ dirs) — for the
   # fail-closed fallback: profile-only dirs (a133-owned/sdm845) have no descriptor and must not run.
-  docker run --rm "$IMAGE" shell -lc 'python3 /opt/pf/platform/core/caps.py list' 2>/dev/null | tr '\n' ' ' || true
+  docker run --rm -- "$IMAGE" shell -lc 'python3 /opt/pf/platform/core/caps.py list' 2>/dev/null | tr '\n' ' ' || true
 }
 
 # ── commands ──────────────────────────────────────────────────────────────────────────────────────
@@ -214,7 +214,7 @@ cmd_gui() {
   # host access-control changes) — the only window route is the container's OWN Xvfb :99 selftest
   # (a private display), or pfvd.
   step "sim gui ${device} — window-selftest (private Xvfb :99 in the container): live window + click->light driver loop"
-  docker run --rm "${SIM_CAPS[@]}" "$DEMO_IMAGE" window-selftest "$device"
+  docker run --rm "${SIM_CAPS[@]}" -- "$DEMO_IMAGE" window-selftest "$device"
 }
 
 # The in-container paths a caller's --fb0-path / --fb0-hdr-path files are bind-mounted at.
@@ -305,7 +305,7 @@ cmd_run_app() {
   fi
   # --init: the capture supervisor would be PID 1, which ignores an unhandled SIGTERM, so `docker
   # stop` (and an app such as fb-anim that runs until SIGTERM) would wait out the stop timeout.
-  local cmd=(docker run --rm --init "${caps[@]}" "${docker_args[@]}" "$DEMO_IMAGE" run-app "$device" "$app" "${args[@]}")
+  local cmd=(docker run --rm --init "${caps[@]}" "${docker_args[@]}" -- "$DEMO_IMAGE" run-app "$device" "$app" "${args[@]}")
   if [ "$print_cmd" = "1" ]; then
     # Dry run: the exact argument list, shell-quoted on one line. No docker, no build, no mkdir.
     printf '%q' "${cmd[0]}"; printf ' %q' "${cmd[@]:1}"; printf '\n'
@@ -337,7 +337,7 @@ cmd_shell() { # interactive debug shell inside the (base or demo) container
   need_docker
   local img="$IMAGE"; [ "${1:-}" = "demo" ] && { build_demo; img="$DEMO_IMAGE"; } || build_base
   step "interactive shell in ${img} (the nested sim caps are attached)"
-  docker run --rm -it "${SIM_CAPS[@]}" "$img" shell
+  docker run --rm -it "${SIM_CAPS[@]}" -- "$img" shell
 }
 
 cmd_doctor() { # preflight only — the "is this host ready?" report
@@ -356,7 +356,7 @@ cmd_doctor() { # preflight only — the "is this host ready?" report
   if [ "$shell_suite" = "1" ]; then
     build_base
     step "§15.2 shell suite — real arm64 launcher + authority core, MODELED cooperative transcripts"
-    docker run --rm "${_net[@]}" "${SIM_CAPS[@]}" "$IMAGE" check-shell
+    docker run --rm "${_net[@]}" "${SIM_CAPS[@]}" -- "$IMAGE" check-shell
   fi
   printf '%s\n' "${GRN}${BOLD}ready.${RST} Try: ./sim run a133" >&2
 }

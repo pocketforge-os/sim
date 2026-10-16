@@ -39,12 +39,15 @@ jobs:
         run: SIM_IMAGE="$IMG" ./sim build base
 
       - name: Hermetic tests (generic/, shell/, synth/)
+        # $IMG is unquoted after the -- end-of-options delimiter on purpose:
+        # the canonical host-route scanner (docs/host-route-policy.md 2.1)
+        # treats a quoted expansion there as an unprovable operand.
         run: |
           docker run --rm --network none --user "$(id -u):$(id -g)" -e HOME=/tmp \
-            -e PYTHONDONTWRITEBYTECODE=1 -w /opt/sim --entrypoint python3 "$IMG" \
+            -e PYTHONDONTWRITEBYTECODE=1 -w /opt/sim --entrypoint python3 -- $IMG \
             -m unittest -v generic/test_run_app_cli.py generic/test_fb_anim.py shell/test_check_shell.py
           docker run --rm --network none --user "$(id -u):$(id -g)" -e HOME=/tmp \
-            -e PYTHONDONTWRITEBYTECODE=1 -w /opt/sim --entrypoint python3 "$IMG" \
+            -e PYTHONDONTWRITEBYTECODE=1 -w /opt/sim --entrypoint python3 -- $IMG \
             synth/selftest-host-input-safety.py
 
       - name: Cleanup CI image
