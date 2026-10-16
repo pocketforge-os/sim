@@ -118,43 +118,36 @@ class RunAppCli(unittest.TestCase):
         argv = self.printed()
         joined = " ".join(argv)
         self.assertNotIn("/dev/uinput", joined)
-        self.assertNotIn("/dev/input:/dev/input", joined)
+        self.assertNotIn("/dev/input", joined)
         self.assertNotIn("--device-cgroup-rule", joined)
         self.assertIn("--cap-add SYS_ADMIN", joined)
         self.assertNotIn("/run/pfvd/fb0", joined)
+        # No host display/clipboard route either (uinput incident PR5, tsp-ihne1.56.5).
+        self.assertNotIn("DISPLAY", joined)
+        self.assertNotIn(".X11-unix", joined)
         self.assertEqual(argv[argv.index("pocketforge-sim:demo"):][:3],
                          ["pocketforge-sim:demo", "run-app", "a133"])
 
-    def test_no_synth_passes_only_named_nodes(self):
-        argv = self.printed("--no-synth", "--input-device", "/dev/input/event7",
-                            "--input-device", "/dev/input/event12")
-        joined = " ".join(argv)
-        self.assertNotIn("/dev/uinput", joined)
-        self.assertNotIn("/dev/input:/dev/input", joined)
-        self.assertIn("--device /dev/input/event7 --device /dev/input/event12", joined)
-        # bwrap still needs these (docker/README.md); only the uinput/input-tree access goes.
-        self.assertIn("--cap-add SYS_ADMIN", joined)
-
     def test_run_app_has_an_init_to_forward_sigterm(self):
         # PID 1 without a handler ignores SIGTERM, so `docker stop` would wait out its timeout.
-        for flags in ((), ("--no-synth", "--input-device", "/dev/input/event7")):
-            with self.subTest(flags=flags):
-                argv = self.printed(*flags)
-                self.assertEqual(argv[argv.index("--rm") + 1], "--init")
-                self.assertEqual(argv.count("--init"), 1)
+        argv = self.printed()
+        self.assertEqual(argv[argv.index("--rm") + 1], "--init")
+        self.assertEqual(argv.count("--init"), 1)
 
-    def test_no_synth_cannot_reach_another_sessions_node(self):
-        # Session A passes event7, session B event12. A's container may open only event7: no
-        # major-13 wildcard in its device cgroup and no CAP_MKNOD to create B's node.
-        a = self.printed("--no-synth", "--input-device", "/dev/input/event7")
-        self.assertNotIn("--device-cgroup-rule", a)
-        self.assertEqual(a[a.index("--cap-drop"):][:2], ["--cap-drop", "MKNOD"])
-        self.assertNotIn("/dev/input/event12", " ".join(a))
-        devices = [a[i + 1] for i, t in enumerate(a) if t == "--device"]
-        self.assertEqual(devices, ["/dev/input/event7"])
-        # Negative control: the private default also has no wildcard and passes no host node.
+    def test_host_node_and_window_flags_are_rejected(self):
+        # tsp-ihne1.56.5 (uinput incident PR5): run-app no longer accepts caller-owned host
+        # evdev nodes or a live host-display window. Each removed flag is an unknown flag, in
+        # every combination, and nothing reaches docker. The default private-input route stays
+        # as the positive control in the same invocation.
+        for flags in (["--no-synth", "--input-device", "/dev/input/event7", "--print-cmd"],
+                      ["--no-synth", "--input-device", "/dev/uinput", "--print-cmd"],
+                      ["--input-device", "/dev/input/event7", "--print-cmd"],
+                      ["--no-synth", "--print-cmd"],
+                      ["--window", "--print-cmd"],
+                      ["--shot", "x.ppm", "--window", "--print-cmd"]):
+            with self.subTest(flags=flags):
+                self.assert_rejected(flags, "unknown flag")
         d = self.printed()
-        self.assertNotIn("--device-cgroup-rule", d)
         self.assertNotIn("--device", d)
         self.assertNotIn("--cap-drop", d)
 
@@ -176,18 +169,6 @@ class RunAppCli(unittest.TestCase):
     def test_app_args_follow_double_dash(self):
         argv = self.printed("--fb0-path", str(self.fb0), "--", "--sim-frame", "x y")
         self.assertEqual(argv[-3:], ["--", "--sim-frame", "x y"])
-
-    def test_rejects_input_device_without_no_synth(self):
-        self.assert_rejected(["--input-device", "/dev/input/event7", "--print-cmd"], "--no-synth")
-
-    def test_rejects_no_synth_without_input_device(self):
-        self.assert_rejected(["--no-synth", "--print-cmd"], "--input-device")
-
-    def test_rejects_non_event_node(self):
-        self.assert_rejected(["--no-synth", "--input-device", "/dev/uinput", "--print-cmd"],
-                             "/dev/input/eventN")
-        self.assert_rejected(["--no-synth", "--input-device", "/dev/input/event7x", "--print-cmd"],
-                             "/dev/input/eventN")
 
     def test_rejects_missing_fb0_path(self):
         self.assert_rejected(["--fb0-path", str(self.fb0) + ".absent", "--print-cmd"],
@@ -223,12 +204,6 @@ class RunAppCli(unittest.TestCase):
 
     def test_rejects_missing_flag_values(self):
         self.assert_rejected(["--fb0-path"], "--fb0-path needs")
-        self.assert_rejected(["--no-synth", "--input-device"], "--input-device needs")
-
-    def test_live_run_requires_existing_char_node(self):
-        # Without --print-cmd the node must exist as a character device on this host.
-        self.assert_rejected(["--no-synth", "--input-device", "/dev/input/event999999"],
-                             "not a character device")
 
     def capture_args(self, argv):
         return argv[argv.index("run-app"):]
@@ -240,7 +215,6 @@ class RunAppCli(unittest.TestCase):
 
     def test_no_frame_conflicts_with_a_frame_consumer(self):
         self.assert_rejected(["--no-frame", "--shot", "x.ppm", "--print-cmd"], "--no-frame writes no frame")
-        self.assert_rejected(["--no-frame", "--window", "--print-cmd"], "--no-frame writes no frame")
         self.printed("--no-frame")  # positive control, same invocation
 
     def make_hdr(self, mode=0o666, size=64):
@@ -334,6 +308,19 @@ class InContainerRunApp(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn(f"generic_capture.py --device a133 --platform /p --app {self.app}", self.called())
 
+    def test_entrypoint_rejects_the_host_display_window_verb(self):
+        # tsp-ihne1.56.5: `pf-sim window` (the host-DISPLAY demo mode) is gone; window-selftest
+        # (its own Xvfb :99) stays. The verb must fail closed, with or without DISPLAY set.
+        for env in (self.env, dict(self.env, DISPLAY=":0")):
+            with self.subTest(display=env.get("DISPLAY")):
+                r = subprocess.run(["bash", str(ROOT / "docker" / "entrypoint.sh"), "window", "a133"],
+                                   env=env, text=True, capture_output=True)
+                self.assertEqual(r.returncode, 2, r.stderr)
+                self.assertIn("unknown command 'window'", r.stderr)
+                self.assertEqual(self.called(), "")
+        # Positive control, same invocation: the private-display selftest verb is still wired.
+        self.assertIn("window-selftest", (ROOT / "docker" / "entrypoint.sh").read_text())
+
     def harness(self, input_dir):
         env = dict(self.env, PF_INPUT_DIR=str(input_dir))
         return subprocess.run([str(ROOT / "harness" / "run-in-harness.sh"), str(self.app)],
@@ -373,6 +360,66 @@ class InContainerRunApp(unittest.TestCase):
         self.assertNotEqual(r.returncode, 0)
         self.assertIn("FB0_HDR_BIND needs FB0_BIND", r.stderr)
         self.assertEqual(self.called(), "")
+
+
+class HostDesktopRoutesRemoved(unittest.TestCase):
+    """Static negative controls (tsp-ihne1.56.5, uinput incident PR5).
+
+    The host display/input routes are deleted, not gated: no host X11 projection (DISPLAY /
+    Xauthority / /tmp/.X11-unix / xhost), no caller-owned host evdev nodes, no live `--window`
+    demo verb. The private routes stay: `window-selftest` creates its OWN Xvfb :99 inside the
+    container, which is a legitimate private display.
+    """
+
+    def text(self, *parts):
+        return (ROOT.joinpath(*parts)).read_text()
+
+    def test_sim_cli_has_no_host_display_or_node_route(self):
+        sim = self.text("sim")
+        for needle in ("xhost", "XAUTHORITY", ".X11-unix", "xdpyinfo",
+                       "--no-synth", "--input-device", "--window"):
+            with self.subTest(needle=needle):
+                self.assertNotIn(needle, sim)
+        # Positive control: the autonomous private-Xvfb selftest is still the gui route.
+        self.assertIn("window-selftest", sim)
+
+    def test_entrypoint_has_no_host_display_verb(self):
+        entry = self.text("docker", "entrypoint.sh")
+        self.assertNotIn('DISPLAY:?', entry)
+        self.assertNotIn("needs a real X display", entry)
+        self.assertNotRegex(entry, r"(?m)^\s*window\)")
+        # Positive controls: the private-display selftest keeps its own Xvfb :99.
+        self.assertIn("window-selftest)", entry)
+        self.assertIn("Xvfb :99", entry)
+
+    def test_capture_and_image_have_no_window_route(self):
+        self.assertNotIn('"--window"', self.text("generic", "generic_capture.py"))
+        dockerfile = self.text("Dockerfile")
+        self.assertNotIn("-e DISPLAY", dockerfile)
+        self.assertNotIn("-v /tmp/.X11-unix", dockerfile)
+
+    def test_gui_never_projects_the_host_display(self):
+        # Behavioural control: even with DISPLAY set in the caller's environment, `sim gui`
+        # invokes the private-Xvfb `window-selftest` and forwards no host display state.
+        tmp = tempfile.TemporaryDirectory(prefix="pf-sim-gui-route-")
+        self.addCleanup(tmp.cleanup)
+        d = Path(tmp.name)
+        bin_ = d / "bin"; bin_.mkdir()
+        log = d / "docker-called"
+        fake = bin_ / "docker"
+        fake.write_text(f"#!/bin/sh\necho \"$@\" >> {shlex.quote(str(log))}\nexit 0\n")
+        fake.chmod(0o755)
+        env = dict(os.environ, PATH=f"{bin_}:{os.environ['PATH']}", NO_COLOR="1",
+                   DISPLAY=":0", XAUTHORITY=str(d / "Xauthority"))
+        r = subprocess.run([str(SIM), "gui", "a133"], env=env, text=True,
+                           capture_output=True, cwd=d, stdin=subprocess.DEVNULL)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        calls = log.read_text()
+        self.assertIn("window-selftest", calls)
+        self.assertNotIn("DISPLAY", calls)
+        self.assertNotIn(".X11-unix", calls)
+        self.assertNotIn("Xauthority", calls)
+        self.assertNotIn("window a133", calls)
 
 
 class ExternalFramebuffer(unittest.TestCase):
@@ -536,7 +583,7 @@ class SignalForwarding(unittest.TestCase):
     # The capture, run in a child python with the platform lookup stubbed out.
     RUN = ("import os, signal, subprocess, sys; sys.path[:0] = [%r]; import generic_capture as gc\n"
            "gc.dimensions = lambda p, d: (None, (4, 2))\n"
-           "gc.composite = lambda *a: subprocess.Popen(['sleep', %r], stdin=subprocess.PIPE, text=True)\n"
+           "gc.composite = lambda *a: subprocess.Popen(['sleep', '30'], stdin=subprocess.PIPE, text=True)\n"
            "if %r:\n"
            "    real = subprocess.Popen\n"
            "    def early(*a, **k):\n"
@@ -549,14 +596,12 @@ class SignalForwarding(unittest.TestCase):
                 "--qemu-tsp", "/q", "--rootfs", "/r", "--harness", str(self.harness),
                 "--frame", str(Path(self.tmp.name) / "frame.ppm"), *frame, "--", "tag"]
 
-    def capture(self, app, launcher, sig, window_secs=None, early=False):
+    def capture(self, app, launcher, sig, early=False):
         for p in (self.mark, self.ready):
             if p.exists(): p.unlink()
-        # --window: the skin window is a stand-in process that would stay open for window_secs.
         # early: a SIGTERM arrives while the app is being started (before Popen returns).
-        frame = ["--window", "--skin-render", "/s"] if window_secs else ["--no-frame"]
-        argv = self.argv(app, launcher, frame)
-        p = subprocess.Popen([sys.executable, "-c", self.RUN % (str(ROOT / "generic"), str(window_secs), early, argv)],
+        argv = self.argv(app, launcher, ["--no-frame"])
+        p = subprocess.Popen([sys.executable, "-c", self.RUN % (str(ROOT / "generic"), early, argv)],
                              start_new_session=True)
         self.procs.append(p)
         if early:  # the stop may end the app before it is up
@@ -594,7 +639,7 @@ class SignalForwarding(unittest.TestCase):
         slow = Path(self.tmp.name) / "bwrap-up"
         env = dict(os.environ, SLOW_BWRAP=str(slow))
         app = self.app(trap=False)
-        p = subprocess.Popen([sys.executable, "-c", self.RUN % (str(ROOT / "generic"), "None", False,
+        p = subprocess.Popen([sys.executable, "-c", self.RUN % (str(ROOT / "generic"), False,
                               self.argv(app, "qemu", ["--no-frame"]))], env=env, start_new_session=True)
         self.procs.append(p)
         end = time.monotonic() + 10
@@ -606,17 +651,6 @@ class SignalForwarding(unittest.TestCase):
         self.assertEqual(p.wait(timeout=10), 143)
         # Control: a stop once the app is up reaches its handler.
         self.assertEqual(self.capture(self.app(trap=True), "qemu", signal.SIGTERM), 0)
-
-    def test_stop_closes_the_live_window(self):
-        # A stop ends the run, window included, instead of waiting for someone to close it.
-        t0 = time.monotonic()
-        self.assertEqual(self.capture(self.app(trap=True), "qemu", signal.SIGTERM, window_secs=30), 0)
-        self.assertLess(time.monotonic() - t0, 8)
-        self.assertEqual(self.mark.read_text(), "tag\n")
-        # Negative control: an app that ends on its own leaves the window open until it closes.
-        t0 = time.monotonic()
-        self.assertEqual(self.capture(self.app(trap=True, loop=False), "qemu", None, window_secs=1.5), 0)
-        self.assertGreaterEqual(time.monotonic() - t0, 1.5)
 
 
 class CaptureCadence(unittest.TestCase):
@@ -675,14 +709,12 @@ class CaptureCadence(unittest.TestCase):
         self.assertFalse(os.path.exists(self.frame))
 
     def test_no_frame_refuses_a_frame_consumer(self):
-        for flag in ("--shot", "--window"):
-            with self.subTest(flag=flag):
-                args = ["--no-frame", flag] + (["/x.ppm"] if flag == "--shot" else [])
-                with self.assertRaises(SystemExit) as cm, \
-                        contextlib.redirect_stderr(io.StringIO()) as err:
-                    self.run_capture(*args)
-                self.assertEqual(cm.exception.code, 2)
-                self.assertIn("--no-frame writes no frame", err.getvalue())
+        args = ["--no-frame", "--shot", "/x.ppm"]
+        with self.assertRaises(SystemExit) as cm, \
+                contextlib.redirect_stderr(io.StringIO()) as err:
+            self.run_capture(*args)
+        self.assertEqual(cm.exception.code, 2)
+        self.assertIn("--no-frame writes no frame", err.getvalue())
 
 
 if __name__ == "__main__":

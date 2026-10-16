@@ -16,8 +16,8 @@
 #                                       # device rows + posture from the BAKED platform's
 #                                       # ci-matrix.toml — the single source CI consumes so the
 #                                       # device list is never hardcoded (`pf caps matrix`).
-#   pf-sim window <device>              # interactive --window demo (DEMO image; needs a real $DISPLAY)
-#   pf-sim window-selftest [device]     # autonomous: live-window smoke + driver loop (Xvfb; DEMO image)
+#   pf-sim window-selftest [device]     # autonomous: live-window smoke + driver loop (its own
+#                                       # Xvfb :99; DEMO image — a private display, never the host's)
 #   pf-sim shell                        # interactive debug
 set -euo pipefail
 SIM=/opt/sim
@@ -35,7 +35,7 @@ case "$cmd" in
     --harness "$SIM/harness/run-in-harness.sh" --platform "$PLATFORM" \
     --skin-render "$SKIN_RENDER" "$@" ;;
   run-app)
-    dev="${1:?usage: pf-sim run-app <device> <arm64-binary> [--shot path] [--window] [-- app-args]}"; app="${2:?missing arm64 binary}"; shift 2
+    dev="${1:?usage: pf-sim run-app <device> <arm64-binary> [--shot path] [-- app-args]}"; app="${2:?missing arm64 binary}"; shift 2
     # A bundled app (`./sim run-app <device> bundled:<name>`) is a path in this image; name a
     # missing one and what the image ships, before bwrap reduces it to "Can't find source path".
     if [ ! -f "$app" ]; then
@@ -68,10 +68,8 @@ case "$cmd" in
     # D6). The device list + per-device posture come from platform ci-matrix.toml — CI derives
     # its rows from HERE instead of a hardcoded device list, so adding a device = adding data.
     exec python3 "$PLATFORM/core/caps.py" matrix "$@" ;;
-  window)
-    # the interactive live demo (DEMO image) — needs a real X display forwarded in
-    : "${DISPLAY:?'pf-sim window' needs a real X display (-e DISPLAY -v /tmp/.X11-unix:/tmp/.X11-unix); for a headless check use 'window-selftest'}"
-    exec env SKIN_RENDER="$WIN" python3 "$SIM/skin/window_driver.py" "${1:-a523}" "${@:2}" ;;
+  # tsp-ihne1.56.5 (uinput incident PR5): the host-display `window` verb is REMOVED. The only
+  # window route is window-selftest below, on the container's OWN Xvfb — a private display.
   window-selftest)
     # autonomous proof (DEMO image): start Xvfb MANUALLY (xvfb-run hangs in some container setups),
     # then run window_driver --self-test, which smokes the live X11 window AND drives the
@@ -88,6 +86,6 @@ case "$cmd" in
   shell)         exec /bin/bash "$@" ;;
   *)
     echo "pf-sim: unknown command '$cmd'" >&2
-    echo "usage: pf-sim {check-control|check-sensor|check-skin|check-generic|check-shell|run-app|check-broker-stub|selftest-region-guard|selftest-skin-optional|check-synth-selftest|matrix|window|window-selftest|shell} [args...]" >&2
+    echo "usage: pf-sim {check-control|check-sensor|check-skin|check-generic|check-shell|run-app|check-broker-stub|selftest-region-guard|selftest-skin-optional|check-synth-selftest|matrix|window-selftest|shell} [args...]" >&2
     exit 2 ;;
 esac

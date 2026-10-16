@@ -201,37 +201,20 @@ cmd_check() { # the full CI matrix, exactly as sim-gate.yml runs it (data-driven
 }
 
 # D9: the 2D skin window is deprecated in favour of pfvd's 3D window (pocketforge-os/pfvd). Printed
-# by `sim gui` before anything else and in the help; the command itself is unchanged.
-GUI_DEPRECATION="./sim gui is deprecated: use pfvd, the 3D device simulator (pfvd --platform <platform checkout>; https://github.com/pocketforge-os/pfvd). sim gui still works as before."
+# by `sim gui` before anything else and in the help. tsp-ihne1.56.5: the host-display projection is
+# removed — `sim gui` runs the container's autonomous private-Xvfb window-selftest, never a host window.
+GUI_DEPRECATION="./sim gui is deprecated: use pfvd, the 3D device simulator (pfvd --platform <platform checkout>; https://github.com/pocketforge-os/pfvd). sim gui runs the container's private-display window-selftest."
 
 cmd_gui() {
   local device="${1:-a133}"
   warn "$GUI_DEPRECATION"
   need_docker; build_demo; validate_devices "$DEMO_IMAGE" "$device"
-  if [ -n "${DISPLAY:-}" ] && xdpyinfo_ok; then
-    # DISPLAY PATH (chosen): forward the host X11 unix socket + xauth cookie INTO the container. We do
-    # NOT build a native-host GUI (that would drag the video SDL3 + skin-render-window build back onto
-    # the host toolchain — the exact assumption the container exists to kill). Wayland-only hosts use
-    # their XWayland ($DISPLAY is set here), so the same X-socket passthrough works. Tradeoff documented
-    # in docs/CLI.md. The container app is root, so we scope local X access to root.
-    local xauth="${XAUTHORITY:-$HOME/.Xauthority}"
-    local xauth_args=(); [ -f "$xauth" ] && xauth_args=(-e XAUTHORITY=/tmp/.pf-xauth -v "$xauth:/tmp/.pf-xauth:ro")
-    command -v xhost >/dev/null 2>&1 && xhost +local:root >/dev/null 2>&1 || true
-    # TTY is OPTIONAL for the live window: the GUI draws on X11, not stdin, so `-t` is stricter than
-    # necessary — with no TTY on stdin (piped invocation, CI, `ssh` without -t) `docker run -it` aborts
-    # with the opaque "the input device is not a TTY" and no window ever opens. Allocate -it only when
-    # stdin IS a terminal (interactive behavior unchanged); otherwise drop it so the window still opens.
-    local it_args=(); [ -t 0 ] && it_args=(-it) || info "no TTY on stdin — opening the live window without an interactive terminal (close the window to exit)."
-    step "sim gui ${device} — live clickable skin (X11 passthrough). Press the bezel; close the window to exit."
-    docker run --rm "${it_args[@]}" "${SIM_CAPS[@]}" \
-      -e DISPLAY="$DISPLAY" "${xauth_args[@]}" -v /tmp/.X11-unix:/tmp/.X11-unix \
-      "$DEMO_IMAGE" window "$device"
-  else
-    warn "no reachable X display (\$DISPLAY='${DISPLAY:-}') — running the autonomous Xvfb self-test instead."
-    warn "  For the LIVE clickable window, run this on a host with an X (or XWayland) display."
-    step "sim gui ${device} — window-selftest (Xvfb): live X11 window + click->light driver loop"
-    docker run --rm "${SIM_CAPS[@]}" "$DEMO_IMAGE" window-selftest "$device"
-  fi
+  # tsp-ihne1.56.5 (uinput incident PR5): `sim gui` NEVER projects onto the host display. There is
+  # no host X11 passthrough of any kind (no display or cookie env forwarding, no X socket bind, no
+  # host access-control changes) — the only window route is the container's OWN Xvfb :99 selftest
+  # (a private display), or pfvd.
+  step "sim gui ${device} — window-selftest (private Xvfb :99 in the container): live window + click->light driver loop"
+  docker run --rm "${SIM_CAPS[@]}" "$DEMO_IMAGE" window-selftest "$device"
 }
 
 # The in-container paths a caller's --fb0-path / --fb0-hdr-path files are bind-mounted at.
@@ -264,7 +247,7 @@ check_shared_file() {
 }
 
 cmd_run_app() {
-  [ $# -ge 2 ] || die "usage: sim run-app <device> <arm64-binary|bundled:<name>> [--shot host.ppm] [--window] [--fb0-path file [--fb0-hdr-path file]] [--no-frame] [--no-synth --input-device /dev/input/eventN ...] [--print-cmd] [-- app-args]"
+  [ $# -ge 2 ] || die "usage: sim run-app <device> <arm64-binary|bundled:<name>> [--shot host.ppm] [--fb0-path file [--fb0-hdr-path file]] [--no-frame] [--print-cmd] [-- app-args]"
   local device="$1" app spec="$2"; shift 2
   local outdir; outdir="$(pwd)/sim-capture"
   local args=(--frame /out/frame.ppm); local docker_args=()
@@ -278,40 +261,27 @@ cmd_run_app() {
     docker_args+=(-v "$app:/run-app:ro"); app=/run-app
   fi
   docker_args+=(-v "$outdir:/out")
-  local fb0_path="" fb0_hdr_path="" no_frame=0 no_synth=0 print_cmd=0 window=0 shot=0 inputs=() arg
+  # tsp-ihne1.56.5 (uinput incident PR5): caller-owned host evdev nodes and the live host-display
+  # window route are REMOVED, not gated. Input is always the container-private modeled FIFO route;
+  # the artifact route is the offscreen composite.
+  local fb0_path="" fb0_hdr_path="" no_frame=0 print_cmd=0 shot=0 arg
   while [ $# -gt 0 ]; do
     arg="$1"; shift
     case "$arg" in
       --shot) [ $# -gt 0 ] || die "--shot needs a host path"; shot=1; args+=(--shot "/out/$(basename "$1")"); shift ;;
-      --window) window=1; args+=(--window) ;;
       --fb0-path) [ $# -gt 0 ] || die "--fb0-path needs a host file (create it first, e.g. truncate -s \$((W*H*4)) <file>)"
         fb0_path="$1"; shift ;;
       --fb0-hdr-path) [ $# -gt 0 ] || die "--fb0-hdr-path needs a host file (create it first, e.g. truncate -s 64 <file>)"
         fb0_hdr_path="$1"; shift ;;
       --no-frame) no_frame=1 ;;
-      --no-synth) no_synth=1 ;;
-      --input-device) [ $# -gt 0 ] || die "--input-device needs an evdev node path (/dev/input/eventN)"
-        [[ "$1" =~ ^/dev/input/event[0-9]+$ ]] || die "--input-device takes a per-node path /dev/input/eventN (got: $1)"
-        inputs+=("$1"); shift ;;
       --print-cmd) print_cmd=1 ;;
       --) args+=(-- "$@" ); break ;;
-      *) die "sim run-app: unknown flag '$arg' (put app arguments after --)" ;;
+      *) die "sim run-app: unknown flag '$arg' (host input nodes and host-display windows were removed — tsp-ihne1.56.5; put app arguments after --)" ;;
     esac
   done
-  # Default generic capture gets an empty private /dev/input. --no-synth is the explicit
-  # caller-owned form: it passes only the named existing nodes and never exposes /dev/uinput.
   local caps=("${SIM_CAPS[@]}")
-  if [ "$no_synth" = "1" ]; then
-    [ "${#inputs[@]}" -gt 0 ] || die "--no-synth needs at least one --input-device /dev/input/eventN (the node(s) you created on the host)"
-    caps=()
-    caps=("${SIM_CAPS[@]}")
-    caps+=(--cap-drop MKNOD)
-    for arg in "${inputs[@]}"; do caps+=(--device "$arg"); done
-  elif [ "${#inputs[@]}" -gt 0 ]; then
-    die "--input-device needs --no-synth (the default session has private modeled input)"
-  fi
   if [ "$no_frame" = "1" ]; then
-    [ "$shot$window" = "00" ] || die "--no-frame writes no frame.ppm; --shot and --window composite it (drop one)"
+    [ "$shot" = "0" ] || die "--no-frame writes no frame.ppm; --shot composites it (drop one)"
     args+=(--no-frame)
   fi
   # Screen: --fb0-path replaces generic_capture's private buffer with a caller-owned host file.
@@ -333,10 +303,6 @@ cmd_run_app() {
     fi
     args=(--fb0 "$RUN_APP_FB0" --fb0-ident "$fb0_ident" "${hdr_args[@]}" "${args[@]}")
   fi
-  if [ "$window" = "1" ] && [ "$print_cmd" = "0" ]; then
-    [ -n "${DISPLAY:-}" ] && xdpyinfo_ok || die "--window needs a reachable X display; use --shot for headless capture"
-  fi
-  [ "$window" = "1" ] && docker_args+=(-e DISPLAY="${DISPLAY:-}" -v /tmp/.X11-unix:/tmp/.X11-unix)
   # --init: the capture supervisor would be PID 1, which ignores an unhandled SIGTERM, so `docker
   # stop` (and an app such as fb-anim that runs until SIGTERM) would wait out the stop timeout.
   local cmd=(docker run --rm --init "${caps[@]}" "${docker_args[@]}" "$DEMO_IMAGE" run-app "$device" "$app" "${args[@]}")
@@ -345,9 +311,6 @@ cmd_run_app() {
     printf '%q' "${cmd[0]}"; printf ' %q' "${cmd[@]:1}"; printf '\n'
     return 0
   fi
-  for arg in "${inputs[@]}"; do
-    [ -c "$arg" ] || die "--input-device $arg is not a character device on this host (create the uinput device first)"
-  done
   need_docker; build_demo; validate_devices "$DEMO_IMAGE" "$device"
   mkdir -p "$outdir"
   "${cmd[@]}"
@@ -388,8 +351,7 @@ cmd_doctor() { # preflight only — the "is this host ready?" report
   if docker info >/dev/null 2>&1; then printf '  %s docker daemon reachable (no sudo needed)\n' "${GRN}✓${RST}" >&2
     else printf '  %s docker daemon NOT reachable — start it or add yourself to the docker group\n' "${RED}✗${RST}" >&2; ok=0; fi
   printf '  %s input transport is container-private (host /dev/uinput not used)\n' "${GRN}✓${RST}" >&2
-  if [ -n "${DISPLAY:-}" ] && xdpyinfo_ok; then printf '  %s X display reachable (%s) — sim gui runs LIVE\n' "${GRN}✓${RST}" "$DISPLAY" >&2
-    else printf '  %s no X display — sim gui falls back to the Xvfb self-test (headless)\n' "${YEL}•${RST}" >&2; fi
+  printf '  %s display transport is container-private (sim gui uses its own Xvfb; no host X11 projection)\n' "${GRN}✓${RST}" >&2
   [ "$ok" = "1" ] || die "not ready — fix the ✗ items above."
   if [ "$shell_suite" = "1" ]; then
     build_base
@@ -398,8 +360,6 @@ cmd_doctor() { # preflight only — the "is this host ready?" report
   fi
   printf '%s\n' "${GRN}${BOLD}ready.${RST} Try: ./sim run a133" >&2
 }
-
-xdpyinfo_ok() { command -v xdpyinfo >/dev/null 2>&1 && xdpyinfo >/dev/null 2>&1; }
 
 cmd_version() {
   local pc qc sp
@@ -427,18 +387,18 @@ ${BOLD}USAGE${RST}   ./sim <command> [args]
 ${BOLD}COMMANDS${RST}
   ${GRN}run${RST} <device>       Boot one virtual device, run its headless logical suite
                      (control + sensor + skin). e.g. ${DIM}./sim run a133${RST}
-  ${GRN}gui${RST} [device]       Open the clickable .scad-rendered skin — press the bezel and watch
-                     the control light up. Live X11 window on a display host; falls back
-                     to an autonomous Xvfb self-test when headless. ${DIM}default: a133${RST}
+  ${GRN}gui${RST} [device]       The clickable-skin proof, headless and autonomous: the container runs a
+                     live window + click->light driver loop on its OWN private Xvfb display.
+                     Never projects onto the host display. ${DIM}default: a133${RST}
                      ${YEL}Deprecated: use pfvd${RST} (the 3D simulator): ${DIM}pfvd --platform <checkout>${RST}
-  ${GRN}run-app${RST} <device> <arm64-bin|bundled:name> [--shot file.ppm|--window] [-- args…]
+  ${GRN}run-app${RST} <device> <arm64-bin|bundled:name> [--shot file.ppm] [-- args…]
                      Attach a generic /dev/fb0, run the binary under qemu-tsp, and composite its
                      pixels into the device skin. No app-specific snapshot protocol is required.
                      bundled:fb-anim runs the image's 60 Hz writer (also fb-pattern).
                      --fb0-path FILE: bind your pre-sized host file at /dev/fb0 (and
                      --fb0-hdr-path FILE: a 64-byte fb0.hdr beside it). --no-frame: no frame.ppm.
-                     --no-synth --input-device /dev/input/eventN: pass only your nodes, no
-                     /dev/uinput, no mknod. --print-cmd: print the docker run argv and exit.
+                     Input is always container-private and modeled. --print-cmd: print the
+                     docker run argv and exit.
   ${GRN}check${RST} [devices…]   The ${BOLD}full CI matrix${RST}, exactly as sim-gate.yml runs it. With no
                      args the device list + per-device posture (blocking/advisory/excluded) are
                      ${BOLD}data-driven${RST} from platform's ci-matrix.toml; naming devices runs just those,
@@ -452,7 +412,7 @@ ${BOLD}COMMANDS${RST}
 ${BOLD}EXAMPLES${RST}
   ./sim doctor                 # is my host ready?  (says what to fix)
   ./sim run a133               # inner-loop: one device, headless
-  ./sim gui a523               # click the bezel — a523 has L3/R3 stick-clicks
+  ./sim gui a523               # bezel click->light proof on the container's private display
   ./sim check                  # what CI will decide — run before you push
   SIM_IMAGE=pocketforge-sim:ci-42 ./sim check --rm-image   # CI form (unique tag, clean up)
 

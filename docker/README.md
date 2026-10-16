@@ -76,24 +76,21 @@ Lowering the host `kernel.apparmor_restrict_unprivileged_userns` sysctl does **n
 nested-Docker case (that knob governs bwrap on the host, not inside a container). No persistent host
 change is needed. Rootless/podman is an untested follow-up caveat.
 
-### `run-app` with host-owned screen and input (pfvd, tsp-h5ed.46.4)
+### `run-app` with a host-owned screen (pfvd, tsp-h5ed.46.4)
 
-`./sim run-app` can hand the app a caller-owned framebuffer and caller-created input nodes, so a
-host viewer reads pixels and injects input without the container synthesising anything:
+`./sim run-app` can hand the app a caller-owned framebuffer, so a host viewer reads pixels without
+the container synthesising anything. Input is always the container-private modeled FIFO route:
+caller-owned host evdev nodes were removed by tsp-ihne1.56.5 (uinput incident PR5).
 
 ```bash
 ./sim run-app a133 ./app.arm64 \
   --fb0-path /run/user/$(id -u)/pfvd/fb0 \
-  --no-synth --input-device /dev/input/event7 \
   --print-cmd                                    # dry run: print the docker run argument list
 ```
 
-The cap set changes only for input; the bwrap knobs stay:
-
-| Default `run-app` | With `--no-synth --input-device /dev/input/eventN` |
-|-------------------|------------------------------------------------------|
-| Empty private `/dev/input`; no input device flags | One `--device /dev/input/eventN` per node (repeat `--input-device`), plus `--cap-drop MKNOD`, so the container sees only this session's caller-owned nodes |
-| `--cap-add SYS_ADMIN`, `apparmor=unconfined`, `seccomp=unconfined` | unchanged (bwrap still needs them; its `--dev-bind /dev/input` exposes exactly the passed nodes) |
+The cap set is the plain bwrap one for every `run-app`: `--cap-add SYS_ADMIN`,
+`apparmor=unconfined`, `seccomp=unconfined`, an empty private `/dev/input`, and no input device
+flags of any kind.
 
 `--fb0-path <host-file>` adds `-v <host-file>:/run/pfvd/fb0`; inside the container
 `generic_capture.py --fb0 /run/pfvd/fb0 --fb0-ident <dev:ino>` checks that the bound file is the
@@ -102,11 +99,10 @@ is uid 0 with bwrap's capabilities dropped); it is never truncated. The present 
 is polling; the optional `fb0.hdr` sidecar is specified in
 [`../docs/FB0-SIDECAR.md`](../docs/FB0-SIDECAR.md); `--fb0-hdr-path <host-file>` binds a second file
 at `/run/pfvd/fb0.hdr` (the harness puts it at `/dev/fb0.hdr`) where an in-container producer can
-publish it. `--input-device` without `--no-synth`, and `--no-synth` without an `--input-device`,
-are errors. Every `run-app` adds `--init`, and `generic_capture.py` forwards SIGTERM/SIGINT to
+publish it. Every `run-app` adds `--init`, and `generic_capture.py` forwards SIGTERM/SIGINT to
 the app, so `docker stop` lets it exit cleanly. A container with no
 input node gets an empty private `/dev/input`. `./sim check` and the CI gate never receive a host
-input node.
+input node, and `run-app` can no longer be asked to pass one.
 
 ## Commands
 
@@ -142,9 +138,11 @@ key; a523 runs **non-blocking** (infra-113 D2 hardware descope). Per-device post
 change (descriptor silicon-reconciled + baselines current + N stable green runs). See
 [`../docs/ADD-A-DEVICE.md`](../docs/ADD-A-DEVICE.md) and the gate-scope header in `sim-gate.yml`.
 
-## Interactive `--window` demo (tsp-qc1.5 — the dogfood image)
+## `window-selftest` demo (tsp-qc1.5 — the dogfood image)
 
-A laptop-runnable image where you press the live bezel and watch the app light up. The
+An image that proves the live bezel→light loop autonomously, on the container's OWN private
+Xvfb display (host-display projection was removed by tsp-ihne1.56.5; the interactive window lives
+in pfvd). The
 [`docker/` `demo` stage](../Dockerfile) adds a **video-capable `skin-render-window`** (X11 + software
 renderer; `skin/build-sdl3-window.sh`) + the X11 client libs + Xvfb to the lean base image. The
 [`window_driver.py`](../skin/window_driver.py) loop bridges `skin-render --window`'s mouse-event
@@ -175,13 +173,8 @@ docker run --rm \
   --cap-add SYS_ADMIN --security-opt apparmor=unconfined --security-opt seccomp=unconfined \
   pocketforge-sim:demo window-selftest a523
 
-# Live demo on a host with a real X display (e.g. the laptop) — click the bezel, watch it light:
-docker run --rm \
-  --cap-add SYS_ADMIN --security-opt apparmor=unconfined --security-opt seccomp=unconfined \
-  -e DISPLAY="$DISPLAY" -v /tmp/.X11-unix:/tmp/.X11-unix \
-  pocketforge-sim:demo window a523
 ```
 
-HONESTY: the live window is upstream SDL3's portable X11 + software rasterizer on the **dev host**, NOT
-the on-device sunxifb/PowerVR path. Acceptance is "the loop runs in the container" (the `window-selftest`
+HONESTY: the window is upstream SDL3's portable X11 + software rasterizer on the container's own
+Xvfb, NOT the on-device sunxifb/PowerVR path. Acceptance is "the loop runs in the container" (the `window-selftest`
 above), **not** an on-panel visual gate — the bezel-click demo is a developer convenience.

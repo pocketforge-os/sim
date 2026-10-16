@@ -18,9 +18,7 @@ spike3/run-spike3.sh	673c016b039201b0ef2ab3d1c0fe8a0ddf6c31e1256616f38b8ff9afc26
 generic/test_fb_anim.py	11242cd63f2953e4dd5c8720c82a5283cef29055d7433fa0f9884f7190f238eb	# generic/test_fb_anim.py:6 No docker, no qemu, no /dev/uinput.
 generic/test_run_app_cli.py	0bb67e16cee3cf9e095a6441845a2a3fcf8e8309366cd1be29b4fb5731240648	# generic/test_run_app_cli.py:4 No docker, no image, no /dev/uinput: `--print-cmd` must print the exact `docker run` argument
 generic/test_run_app_cli.py	bd180098d55c71fb1fe28602e0a7a052225b354c9a0b4bd007632c99e55cf205	# generic/test_run_app_cli.py:120 self.assertNotIn("/dev/uinput", joined)
-generic/test_run_app_cli.py	bd180098d55c71fb1fe28602e0a7a052225b354c9a0b4bd007632c99e55cf205	# generic/test_run_app_cli.py:132 self.assertNotIn("/dev/uinput", joined)
-generic/test_run_app_cli.py	fa526cefeb5ce79100a8d0cf57478d5b65db56a70c63aaba3bc2e1aa1b993425	# generic/test_run_app_cli.py:134 self.assertIn("--device /dev/input/event7 --device /dev/input/event12", joined)
-generic/test_run_app_cli.py	23c409dc79b37dffc9a22c3ed4742a5d1ecc06c1cd9a6a0fc05119d9c640183c	# generic/test_run_app_cli.py:187 self.assert_rejected(["--no-synth", "--input-device", "/dev/uinput", "--print-cmd"],
+generic/test_run_app_cli.py	b0aded27f087ec39eb110982641c43635c7100d053ccaccd7f1973c8a223ac48	# generic/test_run_app_cli.py:143 ["--no-synth", "--input-device", "/dev/uinput", "--print-cmd"],
 docker/entrypoint.sh	4965296e1859a7eedf558241ccd3f11cb5e6c182bfa84aac1c4cf582210be4ef	# docker/entrypoint.sh:14 #                                       # hermetic — no descriptor, no /dev/uinput, no qemu)
 docker/entrypoint.sh	e24452e630436fb3afbb704b6fca0433be7caacd1031f83ccbdd62233086145f	# docker/entrypoint.sh:60 # (tsp-477r). check-synth.py itself needs /dev/uinput + qemu + SDL (run-synth.sh, not this
 .github/workflows/sim-hermetic.yml	404f3632ef04239a05b319d4bec8dcd798de0799b089bd6d168502061affe6d5	# .github/workflows/sim-hermetic.yml:12 # The tests need no device, no /dev/uinput and no caps: they run as the runner's uid with

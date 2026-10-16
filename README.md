@@ -34,10 +34,9 @@ container**, so no host root is needed for the app. First run builds the image (
 re-COPYs the sources, so expect a one-time multi-minute build; cached layers make repeats fast);
 `./sim doctor` reports anything missing up front, each ✗ with its fix.
 
-> **Run `./sim gui` from an interactive terminal.** On a host with a display it opens a **live**
-> X11 window (`docker run -it`), which needs a TTY on stdin — so run it directly in your terminal,
-> not piped through another command. Headless hosts (no `$DISPLAY`) instead run the autonomous
-> Xvfb self-test, which needs no TTY. `./sim run` / `./sim check` are fully non-interactive.
+> **Every `./sim` command is non-interactive.** `./sim gui` runs the container's autonomous
+> `window-selftest` on the container's OWN private Xvfb display — it never projects onto the host
+> display (removed by tsp-ihne1.56.5). For the interactive 3D device window use pfvd.
 
 Full command reference: [`docs/CLI.md`](docs/CLI.md). New to the project? Start with the
 [`docs/` index](docs/README.md).
