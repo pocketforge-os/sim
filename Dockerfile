@@ -108,10 +108,11 @@ COPY harness /src/harness
 RUN OUT=/rootfs SDLSRC=/sdl3/SDL /src/harness/build-harness.sh
 # -> /rootfs/rootfs-arm64 (arm64 bookworm + /usr/local libSDL3.so vendored)
 
-# ───────────────────────────── SDL3-window (X11, software; the live --window demo, tsp-qc1.5) ─────────────────────────────
+# ───────────────────────────── SDL3-window (X11, software; the window-selftest demo, tsp-qc1.5) ─────────────────────────────
 # Video-capable SDL3 (X11 ON, software renderer, GL/Vulkan/Wayland OFF) — opens a REAL window for
-# the interactive skin demo. x86 only (the GUI runs on the host; the app inside still uses the
-# offscreen sdl3-render under qemu-tsp). DEV convenience, NOT a CI/acceptance artifact.
+# the interactive skin demo. x86 only (the window renders in the container, on the container's own
+# Xvfb for window-selftest; the app inside still uses the offscreen sdl3-render under qemu-tsp).
+# DEV convenience, NOT a CI/acceptance artifact.
 FROM toolchain AS sdl3-window
 RUN apt-get update && apt-get install -y --no-install-recommends \
       libx11-dev libxext-dev libxcursor-dev libxi-dev libxrandr-dev libxfixes-dev \
@@ -235,14 +236,16 @@ RUN chmod +x /usr/local/bin/pf-sim
 ENTRYPOINT ["/usr/local/bin/pf-sim"]
 CMD ["check-control", "a133", "a523"]
 
-# ───────────────────────────── demo (tsp-qc1.5; the interactive --window dogfood image) ─────────────────────────────
+# ───────────────────────────── demo (tsp-qc1.5; the window-selftest dogfood image) ─────────────────────────────
 # Extends the lean runtime with the video-capable skin-render-window (X11) + the X11 client libs it
-# dlopens + Xvfb (for the headless --self-test and a no-display fallback). Build with:
+# dlopens + Xvfb, which window-selftest starts ITSELF (:99 — a run-private display inside the
+# container; tsp-ihne1.56.5 removed every host-display forwarding route). Build with:
 #   docker build --target demo -t pocketforge-sim:demo .
-# Run live on a host with a real display:  (see docker/README.md "Interactive demo")
-#   docker run --rm <caps> -e DISPLAY=$DISPLAY -v /tmp/.X11-unix:/tmp/.X11-unix pocketforge-sim:demo window a523
-# The base `pocketforge-sim` (default target) stays lean for CI. HONESTY: the live window is upstream
-# SDL3's X11+software path on the dev host, NOT the on-device graphics; acceptance = the loop runs.
+# Run the autonomous proof (no host display involved):
+#   docker run --rm <caps> pocketforge-sim:demo window-selftest a523
+# The base `pocketforge-sim` (default target) stays lean for CI. HONESTY: the window is upstream
+# SDL3's X11+software path on the container's own Xvfb, NOT the on-device graphics; acceptance =
+# the loop runs.
 FROM runtime AS demo
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \

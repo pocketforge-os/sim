@@ -15,13 +15,13 @@ container entrypoint the CI gate runs, with the exact caps the nested bwrap+qemu
 | Command | What it does |
 |---------|--------------|
 | `./sim run <device>` | Boot one virtual device and run its **headless logical suite** (control + sensor + skin). The dev inner-loop. |
-| `./sim run-app <device> <arm64-bin\|bundled:name> [--shot file.ppm\|--window] [--fb0-path file [--fb0-hdr-path file]] [--no-frame] [--no-synth --input-device /dev/input/eventN] [--print-cmd] [-- args…]` | Attach a generic `/dev/fb0`, run any arm64 binary (or one the image ships) under qemu-tsp, and composite its pixels into the skin. |
-| `./sim gui [device]` | **Deprecated: use [pfvd](https://github.com/pocketforge-os/pfvd)** (`pfvd --platform <platform checkout>`), the 3D device simulator; `sim gui` prints this notice and otherwise works as before. Opens the **clickable `.scad`-rendered skin** — press the bezel, watch the control light. Live X11 window on a display host; autonomous Xvfb self-test when headless. Default `a133`. |
+| `./sim run-app <device> <arm64-bin\|bundled:name> [--shot file.ppm] [--fb0-path file [--fb0-hdr-path file]] [--no-frame] [--print-cmd] [-- args…]` | Attach a generic `/dev/fb0`, run any arm64 binary (or one the image ships) under qemu-tsp, and composite its pixels into the skin. |
+| `./sim gui [device]` | **Deprecated: use [pfvd](https://github.com/pocketforge-os/pfvd)** (`pfvd --platform <platform checkout>`), the 3D device simulator; `sim gui` prints this notice and runs the **autonomous `window-selftest`**: a live window + click→light driver loop on the container's OWN private Xvfb (`:99`). It never projects onto the host display (host X11 passthrough removed, tsp-ihne1.56.5). Default `a133`. |
 | `./sim check [devices…]` | The **full CI matrix**, exactly as [`sim-gate.yml`](../.github/workflows/sim-gate.yml) runs it (control + sensor + skin). With **no args** the device list **and** per-device posture (blocking / advisory / excluded) are **data-driven from `platform/ci-matrix.toml`** (read via `pf caps matrix` inside the image) — so a device added to that matrix runs here with no CLI change. Naming devices runs just those, hard. Run this before you push. |
 | `./sim devices` | List the virtual devices this image can run. |
 | `./sim build [base\|demo\|all]` | Build the pinned image(s) without running anything. |
 | `./sim shell [demo]` | Interactive debug shell inside the container (caps attached). |
-| `./sim doctor` | Check the host is ready (docker, private input transport, display). |
+| `./sim doctor` | Check the host is ready (docker; input and display transports are container-private). |
 | `./sim doctor --shell-suite` | Also run deterministic §15.2 modeled shell transcripts and print the F13/F14 honesty report. |
 | `./sim version` | Show the pinned platform / qemu-tsp / SDL3 refs. |
 
@@ -31,19 +31,21 @@ container entrypoint the CI gate runs, with the exact caps the nested bwrap+qemu
 
 ```bash
 ./sim run-app a133 ./my-app.arm64 --shot my-app.ppm
-./sim run-app a133 ./my-app.arm64 --window -- --app-option value
+./sim run-app a133 ./my-app.arm64 --shot my-app.ppm -- --app-option value
 ```
 
 The binary needs no simulator request/response protocol: it opens and mmaps `/dev/fb0`.
 The simulator exposes `PF_FB_WIDTH`, `PF_FB_HEIGHT`, and `PF_FB_STRIDE` (bytes); pixels
-are XRGB8888. Capture uses a fixed cadence. `--shot` is the offscreen CI form and
-`--window` is the live X11 form. Raw and composited artifacts appear in `sim-capture/`.
+are XRGB8888. Capture uses a fixed cadence. `--shot` (offscreen) is the artifact form — the live
+host-display form was removed by tsp-ihne1.56.5. Raw and composited artifacts appear in
+`sim-capture/`.
 
 The image ships its own apps under `/opt/pf/apps`; `bundled:<name>` runs one without a host
 binary:
 
 ```bash
-./sim run-app a133 bundled:fb-anim --window     # redraws /dev/fb0 at 60 Hz until stopped
+./sim run-app a133 bundled:fb-anim --fb0-path /run/user/$(id -u)/pfvd/fb0 --no-frame
+                                        # redraws /dev/fb0 at 60 Hz until stopped; the caller reads its own buffer
 ./sim run-app a133 bundled:fb-pattern --shot pattern.ppm   # one deterministic frame, exits 0
 ```
 
@@ -58,15 +60,15 @@ A name the image does not ship fails in the container with the list it does ship
 the app (past bwrap, which would not), so `docker stop` and Ctrl-C let the app exit cleanly and its
 exit status is the run's.
 
-Host-owned screen and input (for a host viewer such as pfvd):
+Host-owned screen (for a host viewer such as pfvd). Input is always the container-private
+modeled route: caller-owned host evdev nodes were removed by tsp-ihne1.56.5:
 
 ```bash
 truncate -s $((1280*720*4)) /run/user/$(id -u)/pfvd/fb0 && chmod o+rw /run/user/$(id -u)/pfvd/fb0
-./sim run-app a133 ./my-app.arm64 --fb0-path /run/user/$(id -u)/pfvd/fb0 \
-  --no-synth --input-device /dev/input/event7
+./sim run-app a133 ./my-app.arm64 --fb0-path /run/user/$(id -u)/pfvd/fb0
 truncate -s 64 /run/user/$(id -u)/pfvd/fb0.hdr && chmod o+rw /run/user/$(id -u)/pfvd/fb0.hdr
 ./sim run-app a133 bundled:fb-anim --fb0-path /run/user/$(id -u)/pfvd/fb0 \
-  --fb0-hdr-path /run/user/$(id -u)/pfvd/fb0.hdr --no-frame --no-synth --input-device /dev/input/event7
+  --fb0-hdr-path /run/user/$(id -u)/pfvd/fb0.hdr --no-frame
 ./sim run-app a133 ./my-app.arm64 --fb0-path … --print-cmd   # print the docker run argv, run nothing
 ```
 
@@ -74,9 +76,7 @@ truncate -s 64 /run/user/$(id -u)/pfvd/fb0.hdr && chmod o+rw /run/user/$(id -u)/
 |------|--------|
 | `--fb0-path <host-file>` | Bind the caller's existing, pre-sized file at `/dev/fb0` (via `/run/pfvd/fb0` and `FB0_BIND`) instead of a private buffer. Never created or truncated; must be `o+rw` (`u+rw` if root-owned): the sandboxed app is uid 0 with no capabilities. Change detection is by polling; see [`FB0-SIDECAR.md`](FB0-SIDECAR.md). |
 | `--fb0-hdr-path <host-file>` | With `--fb0-path`: bind a second caller-owned file (at least 64 bytes, same permission rule, not the fb0 file itself) at `/dev/fb0.hdr`, and give the app `PF_FB0_HDR=/dev/fb0.hdr`. A producer that knows when a frame is complete (`fb-anim`) publishes the PFB0 seqlock header there; see [`FB0-SIDECAR.md`](FB0-SIDECAR.md). |
-| `--no-frame` | Never convert fb0 into `sim-capture/frame.ppm`. Not with `--shot`/`--window`, which composite it. With `--fb0-path` and no `--window` the capture already skips the 50 ms snapshots and keeps only the frame at a clean exit; `--no-frame` drops that one too. |
-| `--no-synth` | Pass caller-owned input instead of the empty/private default. Adds `--cap-drop MKNOD`; needs at least one `--input-device`. |
-| `--input-device /dev/input/eventN` | Pass exactly this host node with `--device` (repeatable). Only with `--no-synth`. |
+| `--no-frame` | Never convert fb0 into `sim-capture/frame.ppm`. Not with `--shot`, which composites it. With `--fb0-path` the capture already skips the 50 ms snapshots and keeps only the frame at a clean exit; `--no-frame` drops that one too. |
 | `--print-cmd` | Print the exact `docker run` argument list, shell-quoted on one line, and exit. No docker call, no build, no `sim-capture/`. |
 
 ## Requirements (and the errors that name them)
@@ -126,32 +126,28 @@ same descriptor to the same control-surface call as the front view (so "GUI clic
 holds per view). The screen (live fb) shows only on the **front** view — the top view is bezel + its
 controls. A device with no extra views simply shows no rotate affordance.
 
-## `sim gui` — the display-path tradeoff (the deliberate decision)
+## `sim gui` — the display path (host projection removed, tsp-ihne1.56.5)
 
-`sim gui` needs to put a **real window** on your screen from **inside the container**. Two shapes were
-possible:
+`sim gui` used to project the container's demo window onto the **host** display: it forwarded the
+host X11 unix socket, `$DISPLAY` and the xauth cookie into the container, and ran
+`xhost +local:root` so the root-in-container client could connect. The uinput incident
+(tsp-ihne1.56) showed host-global resources are not safely projectable from shared or CI hosts, so
+PR5 **removed the route entirely** — it is not gated or opt-in:
 
-1. **X11 unix-socket passthrough — CHOSEN.** The container's `skin-render-window` (upstream SDL3, X11 +
-   software renderer, built in the `demo` image stage) draws to the **host's X server** over the bound
-   `/tmp/.X11-unix` socket, with `$DISPLAY` and the host's xauth cookie forwarded in (read-only). No
-   graphics leave the container except X protocol on a unix socket; nothing is built on the host.
-   - **Wayland hosts** run their compositor's **XWayland** ($DISPLAY is set), so the same X-socket
-     passthrough works unchanged — no Wayland-native path is needed.
-   - The container app is root, so `sim gui` scopes local X access to root (`xhost +local:root`) when
-     `xhost` is present; the xauth cookie covers cookie-authenticated servers without touching `xhost`.
-   - When there is **no reachable display** (a headless build host like modelmaker), `sim gui` runs the
-     **autonomous Xvfb self-test** instead (`window-selftest`) — a real X11 window under a virtual
-     framebuffer plus the click→light driver loop — so the command is always useful, never a dead end.
+1. **Private-display selftest — the only route.** `sim gui` always runs the container's
+   autonomous `window-selftest`: a real X11 window on the container's **own** Xvfb `:99` plus the
+   click→light driver loop. The display is created and destroyed inside the run; no host
+   display, input or clipboard state is read or written.
+2. **The interactive window lives in pfvd.** `sim gui` stays deprecated (D9) in favour of
+   `pfvd --platform <checkout>`, the 3D device simulator, which owns its own session policy.
+3. **A native-host GUI build — still REJECTED.** Building `skin-render-window` + the video SDL3
+   on the host would drag the whole X11/SDL toolchain back onto the developer's machine — exactly
+   the host toolchain assumption the container exists to kill (the point of `tsp-qc1.1`).
 
-2. **A native-host GUI build — REJECTED.** Building `skin-render-window` + the video SDL3 on the host
-   would drag the whole X11/SDL toolchain back onto the developer's machine — **exactly the host
-   toolchain assumption the container exists to kill** (the point of `tsp-qc1.1`). It would also fork
-   the render path (host binary vs container binary) and break "one pinned image, any host."
-
-**Honesty (unchanged).** The live window is upstream SDL3's portable X11 + software rasterizer on the
-**dev host**, **not** the on-device sunxifb/PowerVR path. Acceptance for `gui` is "the clickable loop
-runs and a press resolves through the descriptor to the lit control" — a developer convenience proving
-the **logical** input→action→light binding, **not** an on-panel visual gate (that stays the
+**Honesty (unchanged).** The window is upstream SDL3's portable X11 + software rasterizer on the
+container's own Xvfb, **not** the on-device sunxifb/PowerVR path. Acceptance for `gui` is "the
+clickable loop runs and a press resolves through the descriptor to the lit control" — a
+**logical** input→action→light proof, **not** an on-panel visual gate (that stays the
 flash→serial→webcam hardware gate's authority).
 
 ## Relationship to the CI gate

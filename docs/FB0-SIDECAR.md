@@ -55,14 +55,6 @@ against a hostile local user.
   on the same inode after the in-container check is the owner's own change. It is not a swap.
   The native launcher (`--launcher native`, no container and no `--fb0-ident`) hands the path
   straight to the app and keeps the plain window.
-- **`--input-device`:** still a path-pattern check (`/dev/input/eventN`) plus `[ -c ]` just
-  before `docker run`. No fd-based check is made: the caller may not be able to open the node
-  (it is typically `root:input 0660`, and docker does not need the caller's permission), and
-  docker `--device` would resolve the path again anyway. `/dev/input` is root-owned, so
-  without root only the kernel can change what `eventN` names.
-  **Residual window:** the caller's uinput device is destroyed and `eventN` is reused by
-  another device between the check and `docker run`. The container then gets that device. Keep
-  the uinput device open until the run ends.
 
 ## Present signal: poll
 
@@ -70,10 +62,9 @@ against a hostile local user.
 mmap; nothing in the path sees a "frame done" moment, and an unmodified fbdev app gives none.
 The consumer detects change by **polling** the buffer at its own cadence (for example a 60 Hz
 timer, comparing a few 4 KiB stripes before a full upload). `generic_capture.py` snapshots
-the buffer into `sim-capture/frame.ppm` on its fixed cadence for `--window` and for its private
+the buffer into `sim-capture/frame.ppm` on its fixed cadence for its private
 buffer; that snapshot is a converted copy for the skin compositor, not a present signal. With
-`--fb0-path` and no `--window` the caller reads its own file, so the capture skips the cadence
-snapshots and keeps only the frame at a clean exit; `--no-frame` skips that one too.
+`--fb0-path` the caller reads its own file, so the capture skips the cadence snapshots and keeps only the frame at a clean exit; `--no-frame` skips that one too.
 
 Tearing is accepted: this is pixel transport, not vsync (see `HONESTY-CONTRACT.md`). A
 double-buffered present would need an ioctl a plain file cannot provide.
@@ -118,7 +109,7 @@ and reports it.
 ```bash
 truncate -s 64 /run/user/$(id -u)/pfvd/fb0.hdr && chmod o+rw /run/user/$(id -u)/pfvd/fb0.hdr
 ./sim run-app a133 bundled:fb-anim --fb0-path /run/user/$(id -u)/pfvd/fb0 \
-  --fb0-hdr-path /run/user/$(id -u)/pfvd/fb0.hdr --no-synth --input-device /dev/input/event7
+  --fb0-hdr-path /run/user/$(id -u)/pfvd/fb0.hdr --no-frame
 ```
 
 The caller creates the header file (at least 64 bytes, zero-filled is fine: bad magic means

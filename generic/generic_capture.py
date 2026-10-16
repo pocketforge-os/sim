@@ -183,9 +183,7 @@ def composite(skin, fb, out, renderer, work):
     scene = skin.emit_scene(body, lit, fb, set(), title="PocketForge - Generic App")
     scene_path = os.path.join(work, "scene.txt")
     with open(scene_path, "w") as f: f.write(scene)
-    mode = ["--window"] if out is None else ["--shot", out]
-    return subprocess.Popen([renderer, "--scene", scene_path] + mode,
-                            stdin=subprocess.PIPE if out is None else None, text=True)
+    return subprocess.Popen([renderer, "--scene", scene_path, "--shot", out])
 
 
 def main():
@@ -193,8 +191,8 @@ def main():
     ap.add_argument("--device", required=True); ap.add_argument("--platform", required=True)
     ap.add_argument("--app", required=True); ap.add_argument("--launcher", choices=("native","qemu"), default="qemu")
     ap.add_argument("--qemu-tsp"); ap.add_argument("--rootfs"); ap.add_argument("--harness")
-    ap.add_argument("--frame", required=True); ap.add_argument("--shot"); ap.add_argument("--window", action="store_true")
-    ap.add_argument("--skin-render"); ap.add_argument("--cadence-ms", type=int, default=50)
+    ap.add_argument("--frame", required=True); ap.add_argument("--shot"); ap.add_argument("--skin-render")
+    ap.add_argument("--cadence-ms", type=int, default=50)
     ap.add_argument("--fb0", help="caller-owned fb0 file to bind instead of a private buffer")
     ap.add_argument("--fb0-ident", help="dev:ino the host checked for --fb0 (set by ./sim run-app)")
     ap.add_argument("--fb0-hdr", help="caller-owned 64-byte fb0.hdr file the app may publish (needs --fb0)")
@@ -205,8 +203,8 @@ def main():
     a = ap.parse_args()
     if a.app_args[:1] == ["--"]:
         a.app_args = a.app_args[1:]
-    if a.no_frame and (a.shot or a.window):
-        ap.error("--no-frame writes no frame.ppm; --shot and --window composite it")
+    if a.no_frame and a.shot:
+        ap.error("--no-frame writes no frame.ppm; --shot composites it")
     if a.fb0_hdr and not a.fb0:
         ap.error("--fb0-hdr needs --fb0 (the header describes a caller-owned buffer)")
     skin, (w,h) = dimensions(a.platform, a.device)
@@ -233,24 +231,17 @@ def main():
             env.update(QEMU_TSP=a.qemu_tsp, ROOTFS=a.rootfs, FB0_BIND=fb)
             if hdr: env["FB0_HDR_BIND"] = hdr
             cmd = [a.harness, a.app] + a.app_args
-        # Snapshots on cadence feed the live window, or are the only way out of a private buffer.
-        # A caller-owned --fb0 is read by its owner, so without --window only the exit frame is kept.
-        cadence = not a.no_frame and (a.window or a.fb0 is None)
+        # Snapshots on cadence are the only way out of a private buffer. A caller-owned --fb0 is
+        # read by its owner, so only the exit frame is kept.
+        cadence = not a.no_frame and a.fb0 is None
         stop = StopForwarder()
         proc = subprocess.Popen(cmd, env=env)
         stop.start(proc)
-        window = None
-        if a.window:
-            if not a.skin_render: ap.error("--skin-render is required with --window")
-            capture_raw(fb, a.frame, w, h)
-            window = composite(skin, a.frame, None, a.skin_render, work)
         while proc.poll() is None:
             stop.poll()
             # Snapshot on cadence, not on mtime: mmap writes need not update inode metadata.
             if cadence:
                 capture_raw(fb, a.frame, w, h)
-            if window and window.poll() is None:
-                window.stdin.write(f"reload {os.path.join(work,'scene.txt')}\n"); window.stdin.flush()
             time.sleep(max(1,a.cadence_ms)/1000.0)
         # A signal death (negative returncode) is reported the shell's way, 128 + signal.
         if proc.returncode: return proc.returncode if proc.returncode > 0 else 128 - proc.returncode
@@ -260,11 +251,6 @@ def main():
             if not a.skin_render: ap.error("--skin-render is required with --shot")
             shot = composite(skin, a.frame, a.shot, a.skin_render, work)
             return shot.wait()
-        if window:
-            if stop.stopped and window.poll() is None:
-                window.terminate(); window.wait()
-                return 0
-            return window.wait()
     return 0
 
 if __name__ == "__main__": sys.exit(main())
