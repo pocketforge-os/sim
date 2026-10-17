@@ -132,20 +132,17 @@ jobs:
 
       - name: Install pinned kubo (offline CID hashing)
         run: |
-          set -euo pipefail
-          # Pinned to match image/kubo.pin (kubo 0.42.0) so the offline CID uses the SAME
-          # unixfs-v1-2025 profile the rest of the project pins with. Verify BOTH the dist tarball
-          # (sha512, upstream-published) AND the extracted binary (sha256) fail-closed.
-          KUBO_VER=0.42.0
-          KUBO_TARBALL_SHA512=054c38a0cf66f7d738e25085ad62cb3a42d03d4bac329b7dd25c1d71cf18e1ce87d55b1d1b705b04c65210dca9109973579e0eb1cd72f6341ecb3311d840d156
-          KUBO_BINARY_SHA256=a2bcd470ee4c5df3cfc7f11d8acb7b10ab6cadbf0fd8cb079c77fd303746ee4d
-          tgz="kubo_v${KUBO_VER}_linux-amd64.tar.gz"
-          curl -fsSL "https://dist.ipfs.tech/kubo/v${KUBO_VER}/${tgz}" -o "$tgz"
-          echo "${KUBO_TARBALL_SHA512}  ${tgz}" | sha512sum -c -
-          tar xzf "$tgz"
-          echo "${KUBO_BINARY_SHA256}  kubo/ipfs" | sha256sum -c -
-          sudo install -m0755 kubo/ipfs /usr/local/bin/ipfs
-          ipfs --version
+          # Logic lives in scripts/install-pinned-kubo.sh so the hermetic test
+          # tests/test_install_pinned_kubo.sh exercises the REAL step (loopback fixture,
+          # positive + negative controls). Pins match image/kubo.pin (kubo 0.42.0,
+          # unixfs-v1-2025); BOTH hash checks (tarball sha512, binary sha256) stay fail-closed.
+          # tsp-mc9m.41.1030.10: dist.ipfs.tech has been unreachable since ~2026-10-10
+          # (curl (28) after 300 s; 13/13 red runs). The script tries the ipfs/kubo GitHub
+          # release FIRST (byte-identical tarball — same sha512/sha256, verified 2026-10-17)
+          # with dist.ipfs.tech kept as a bounded fallback; every attempt is bounded
+          # (--connect-timeout 10 / --max-time / --retry 1) so a total outage fails in under
+          # a minute naming the host, instead of hanging 300 s AFTER the ghcr push.
+          bash scripts/install-pinned-kubo.sh
 
       - name: Export published image (by digest) as an OCI archive
         id: oci
