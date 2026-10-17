@@ -8,8 +8,14 @@
 # runners since ~2026-10-10 (curl (28) after 300 s; 13/13 red publish-image runs). The ipfs/kubo
 # GitHub release serves the BYTE-IDENTICAL upstream tarball (same sha512/sha256 — verified
 # 2026-10-17 against the pins), so it is tried FIRST; dist.ipfs.tech stays as a bounded fallback.
-# Every attempt is bounded (--connect-timeout/--max-time/--retry), so a total outage fails in
-# under a minute with a message naming the host instead of hanging past the ghcr push.
+#
+# Time bounds (review finding on #65, fixed here): the whole source loop runs under an
+# aggregate deadline (KUBO_TOTAL_BUDGET, default 50 s). Each attempt's --max-time and
+# --connect-timeout are capped at the budget remaining, and curl --retry is NOT used because
+# retries reset the --max-time timer and would defeat the aggregate bound. A source that
+# accepts the connection but stalls mid-transfer is aborted by --speed-limit/--speed-time,
+# so the fallback still fits inside the budget. Any total outage therefore fails in under a
+# minute with a message naming the host, instead of hanging past the ghcr push.
 #
 # Hermetic test: tests/test_install_pinned_kubo.sh (loopback fixture; positive + negative controls).
 set -euo pipefail
@@ -20,8 +26,11 @@ KUBO_BINARY_SHA256="${KUBO_BINARY_SHA256:-a2bcd470ee4c5df3cfc7f11d8acb7b10ab6cad
 KUBO_URLS="${KUBO_URLS:-https://github.com/ipfs/kubo/releases/download/v${KUBO_VER}/kubo_v${KUBO_VER}_linux-amd64.tar.gz https://dist.ipfs.tech/kubo/v${KUBO_VER}/kubo_v${KUBO_VER}_linux-amd64.tar.gz}"
 KUBO_INSTALL_DIR="${KUBO_INSTALL_DIR:-/usr/local/bin}"
 KUBO_CONNECT_TIMEOUT="${KUBO_CONNECT_TIMEOUT:-10}"
-KUBO_MAX_TIME="${KUBO_MAX_TIME:-300}"
-KUBO_RETRY="${KUBO_RETRY:-1}"
+KUBO_MAX_TIME="${KUBO_MAX_TIME:-300}"          # per-attempt cap, further capped by the budget
+KUBO_TOTAL_BUDGET="${KUBO_TOTAL_BUDGET:-50}"   # aggregate deadline for the whole source loop
+KUBO_MIN_ATTEMPT="${KUBO_MIN_ATTEMPT:-5}"      # don't start an attempt with less left
+KUBO_SPEED_LIMIT="${KUBO_SPEED_LIMIT:-1024}"   # B/s floor; below it for SPEED_TIME -> abort
+KUBO_SPEED_TIME="${KUBO_SPEED_TIME:-10}"
 
 tgz="kubo_v${KUBO_VER}_linux-amd64.tar.gz"
 workdir="$(mktemp -d)"
@@ -30,11 +39,22 @@ cd "$workdir"
 
 read -r -a urls <<< "$KUBO_URLS"
 verified=0
+start_epoch="$(date +%s)"
 for url in "${urls[@]}"; do
   rest="${url#*://}"; host="${rest%%/*}"
-  echo "kubo-install: trying ${url}"
-  if ! curl -fsSL --connect-timeout "$KUBO_CONNECT_TIMEOUT" --max-time "$KUBO_MAX_TIME" \
-        --retry "$KUBO_RETRY" --retry-delay 2 "$url" -o "$tgz"; then
+  remaining=$((KUBO_TOTAL_BUDGET - ($(date +%s) - start_epoch)))
+  if [ "$remaining" -lt "$KUBO_MIN_ATTEMPT" ]; then
+    echo "kubo-install: aggregate budget ${KUBO_TOTAL_BUDGET}s exhausted before trying host ${host}" >&2
+    break
+  fi
+  attempt_time="$KUBO_MAX_TIME"
+  [ "$attempt_time" -gt "$remaining" ] && attempt_time="$remaining"
+  connect_time="$KUBO_CONNECT_TIMEOUT"
+  [ "$connect_time" -gt "$attempt_time" ] && connect_time="$attempt_time"
+  echo "kubo-install: trying ${url} (budget remaining ${remaining}s)"
+  if ! curl -fsSL --connect-timeout "$connect_time" --max-time "$attempt_time" \
+        --speed-limit "$KUBO_SPEED_LIMIT" --speed-time "$KUBO_SPEED_TIME" \
+        "$url" -o "$tgz"; then
     echo "kubo-install: download FAILED from host ${host}" >&2
     continue
   fi
