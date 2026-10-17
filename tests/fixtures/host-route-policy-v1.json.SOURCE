@@ -1,6 +1,6 @@
 # Vendored canonical host-route spec file (PR5 port phase, bead tsp-ihne1.56.5).
 # A test fails if the sha256 of the vendored file differs from fixture_sha256.
 source_repo=pocketforge-os/runtime
-source_commit=0b1b5d094e173cee3b96399e489d0bf549fdb706
+source_commit=9cfba117de3bac4d51061738bc6076e027f3c463
 source_path=tests/fixtures/host-route-policy-v1.json
-fixture_sha256=a29ea7d54ad9d9b7e230f74cb627cdb894ba98dd31ced7d663dde3036d2f0796
+fixture_sha256=0d24b88f6e8140a25056bac9793df008101a369c25f967a8590559c9e2063c6e

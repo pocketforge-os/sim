@@ -2,6 +2,6 @@
 # Copied verbatim from the canonical spec; a test fails if the sha256 of the
 # vendored file differs from fixture_sha256.
 source_repo=pocketforge-os/runtime
-source_commit=0b1b5d094e173cee3b96399e489d0bf549fdb706
+source_commit=9cfba117de3bac4d51061738bc6076e027f3c463
 source_path=tests/uinput_inventory.py
-fixture_sha256=5f5909527d39f683d7e2176ba55b5e730cbf1e318271a894d38e11a00282d805
+fixture_sha256=2ab81480358a83ed8f521205539be8023c6a94e3436eb5ac6137eed28a9afca1
