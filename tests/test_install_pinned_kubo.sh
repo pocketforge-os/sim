@@ -75,6 +75,18 @@ assert "if" not in kubo, "kubo install step must run in BOTH modes (producer-run
 build = steps["Build + push the lean runtime image"]["run"]
 assert 'inputs.dry_run }}" = "true"' in build and "NOT tagging/pushing" in build, \
     "build step lacks the dry-run no-push branch"
+# fail-closed guard: a non-main dispatch may never reach any writing step, even with
+# dry_run omitted (default 'false') or explicitly 'false' (review 5555879487, blocking)
+all_steps = wf["jobs"]["publish"]["steps"]
+guard = all_steps[0]
+assert guard.get("name") == "Refuse non-main dispatch unless dry_run=true", \
+    f"first step must be the branch-dispatch guard, got {guard.get('name')!r}"
+gcond = " ".join(str(guard.get("if", "")).split())
+for frag in ("github.event_name == 'workflow_dispatch'",
+             "github.ref != 'refs/heads/main'",
+             "inputs.dry_run != 'true'"):
+    assert frag in gcond, f"guard condition missing {frag!r}: {gcond!r}"
+assert "exit 1" in guard.get("run", ""), "guard must fail the run (exit 1)"
 PYEOF
 then
   pass "P1c dry_run input gates every publish step; kubo install + build stay ungated/no-push"

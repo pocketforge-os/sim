@@ -71,6 +71,20 @@ jobs:
     env:
       IMAGE: ghcr.io/${{ github.repository_owner }}/sim
     steps:
+      # FAIL-CLOSED GUARD (tsp-mc9m.41.1030.10): a workflow_dispatch from any non-main ref is
+      # REJECTED unless dry_run=true — the dry_run choice alone is advisory, and an omitted or
+      # explicit 'false' from a branch would otherwise push ghcr tags/attestation/artifact.
+      # Normal push events are unaffected (event_name != workflow_dispatch); publishing
+      # dispatches remain possible from main. Runs first, before any writing step.
+      - name: Refuse non-main dispatch unless dry_run=true
+        if: >-
+          ${{ github.event_name == 'workflow_dispatch'
+              && github.ref != 'refs/heads/main'
+              && inputs.dry_run != 'true' }}
+        run: |
+          echo "::error::publish-image: refusing dispatch from ${GITHUB_REF} with dry_run='${{ inputs.dry_run }}' — branch runs MUST use dry_run=true (never publish from a branch)"
+          exit 1
+
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4 (repo requires SHA-pinned actions)
 
       # NOTE (tsp-65jc.9 startup_failure fix, 2026-07-26): the org allowed-actions policy is
