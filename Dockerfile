@@ -72,7 +72,9 @@ WORKDIR /src
 COPY . /src
 RUN tests/test_uinput_domain_c.sh \
  && python3 -m unittest -v tests/test_uinput_domain.py \
- && python3 tests/uinput_inventory.py --self-test
+ && python3 tests/uinput_inventory.py --self-test \
+ && python3 tests/uinput_inventory.py \
+ && python3 -m unittest -v tests.test_vendored_sources
 
 # ───────────────────────────── qemu-tsp (evdev/uinput ioctl fork) ─────────────────────────────
 FROM toolchain AS qemu
