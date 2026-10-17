@@ -4,7 +4,7 @@
   "note": "Derived only from committed provisioning; schema and evaluator semantics: runtime docs/host-route-policy.md (input-runner-host-map-v1). seat_policy=unknown is valid only for github-hosted runners.",
   "generated_from": {
     "repo": "pocketforge-automation",
-    "commit": "a3f996ba6876fcf29f235a52579fb67dc90cf8b8"
+    "commit": "05624f6506f085ed4acbeca1d95564f68e024e40"
   },
   "entries": [
     {
@@ -31,7 +31,7 @@
         "pf-ci",
         "pf-ci-container"
       ],
-      "physical_host": "modelmaker review guests (runner@192.168.154.10, via mm@10.0.40.90)",
+      "physical_host": "modelmaker review guests (runner@192.168.154.10 and runner@192.168.154.11, via mm@10.0.40.90)",
       "host_class": "vm",
       "ephemeral": false,
       "seat_policy": "forbidden",
