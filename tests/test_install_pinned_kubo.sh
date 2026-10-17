@@ -52,6 +52,36 @@ else
   fail "P1b workflow must call scripts/install-pinned-kubo.sh and the script must keep sha512sum -c"
 fi
 
+# ── P1c: workflow_dispatch dry_run gates publishing but NOT the kubo step ─────
+if python3 - "$WORKFLOW" <<'PYEOF'
+import sys, yaml
+wf = yaml.safe_load(open(sys.argv[1]))
+inp = wf[True]["workflow_dispatch"]["inputs"]["dry_run"]  # yaml parses bare `on:` as True
+assert inp["default"] == "false", f"dry_run default must be 'false', got {inp['default']!r}"
+steps = {s["name"]: s for s in wf["jobs"]["publish"]["steps"] if "name" in s}
+gated = [
+    "Log in to ghcr.io",
+    "Attest build provenance (SLSA)",
+    "Export published image (by digest) as an OCI archive",
+    "Compute deterministic IPFS CID (offline, unixfs-v1-2025)",
+    "Upload OCI archive as a run artifact (the ops-side pin source)",
+    "Record published digest + IPFS mirror pair",
+]
+for name in gated:
+    cond = steps[name].get("if", "")
+    assert "inputs.dry_run != 'true'" in str(cond), f"{name}: not dry_run-gated ({cond!r})"
+kubo = steps["Install pinned kubo (offline CID hashing)"]
+assert "if" not in kubo, "kubo install step must run in BOTH modes (producer-run evidence)"
+build = steps["Build + push the lean runtime image"]["run"]
+assert 'inputs.dry_run }}" = "true"' in build and "NOT tagging/pushing" in build, \
+    "build step lacks the dry-run no-push branch"
+PYEOF
+then
+  pass "P1c dry_run input gates every publish step; kubo install + build stay ungated/no-push"
+else
+  fail "P1c workflow dry_run gating is wrong (see python assertion above)"
+fi
+
 # ── P2: script defaults carry the exact pins ──────────────────────────────────
 if [ -f "$SCRIPT" ] \
    && grep -qF "KUBO_VER:-$PINNED_VER" "$SCRIPT" \

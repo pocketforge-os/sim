@@ -37,6 +37,16 @@ on:
     branches: [main]
     tags: ['v*']
   workflow_dispatch:
+    inputs:
+      dry_run:
+        # tsp-mc9m.41.1030.10 (merge gate: producer run at head). 'true' BUILDS the image and
+        # runs the kubo-install/CID tooling check but publishes NOTHING: no ghcr login, no tag
+        # push, no attestation, no OCI export/artifact. Never publish from a branch: branch
+        # dispatches MUST use dry_run=true (Derive tags would push a :<branch> tag otherwise).
+        description: 'Build + verify tooling only; publish nothing to ghcr/IPFS (branch runs MUST use true)'
+        type: choice
+        options: ['false', 'true']
+        default: 'false'
 
 # Least-privilege: read the source, write the package, and (for attestation) mint an OIDC token +
 # write attestations. Nothing else. `packages: write` here is the WORKFLOW GITHUB_TOKEN scope — it
@@ -71,6 +81,7 @@ jobs:
       # are github-owned and stay.
 
       - name: Log in to ghcr.io
+        if: ${{ inputs.dry_run != 'true' }}
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
         # workflow token, packages:write — NOT the App token
 
@@ -101,17 +112,24 @@ jobs:
             --label "org.opencontainers.image.source=https://github.com/${{ github.repository }}" \
             --label "org.opencontainers.image.revision=${{ github.sha }}" \
             -t "$IMAGE:tmp-build" .
-          for t in ${{ steps.meta.outputs.tags }}; do
-            docker tag "$IMAGE:tmp-build" "$IMAGE:$t"
-            docker push "$IMAGE:$t"
-          done
-          digest=$(docker inspect --format='{{index .RepoDigests 0}}' "$IMAGE:tmp-build" | cut -d@ -f2)
-          [ -n "$digest" ] || { echo "no digest after push"; exit 1; }
-          echo "digest=$digest" >> "$GITHUB_OUTPUT"
-          echo "published digest: $digest"
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            # dry_run: image BUILT (proves the build half) but NOTHING is tagged or pushed.
+            echo "dry_run=true: built $IMAGE:tmp-build locally; NOT tagging/pushing to ghcr"
+            echo "digest=dry-run-no-push" >> "$GITHUB_OUTPUT"
+          else
+            for t in ${{ steps.meta.outputs.tags }}; do
+              docker tag "$IMAGE:tmp-build" "$IMAGE:$t"
+              docker push "$IMAGE:$t"
+            done
+            digest=$(docker inspect --format='{{index .RepoDigests 0}}' "$IMAGE:tmp-build" | cut -d@ -f2)
+            [ -n "$digest" ] || { echo "no digest after push"; exit 1; }
+            echo "digest=$digest" >> "$GITHUB_OUTPUT"
+            echo "published digest: $digest"
+          fi
           # target runtime = the lean CI/dev image (NOT demo); design §2
 
       - name: Attest build provenance (SLSA)
+        if: ${{ inputs.dry_run != 'true' }}
         uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be  # v2
         with:
           subject-name: ${{ env.IMAGE }}
@@ -148,6 +166,7 @@ jobs:
 
       - name: Export published image (by digest) as an OCI archive
         id: oci
+        if: ${{ inputs.dry_run != 'true' }}
         run: |
           set -euo pipefail
           command -v skopeo >/dev/null || { sudo apt-get update && sudo apt-get install -y skopeo; }
@@ -176,6 +195,7 @@ jobs:
 
       - name: Compute deterministic IPFS CID (offline, unixfs-v1-2025)
         id: cid
+        if: ${{ inputs.dry_run != 'true' }}
         run: |
           set -euo pipefail
           archive='${{ steps.oci.outputs.archive }}'
@@ -195,6 +215,7 @@ jobs:
           echo "deterministic CID (unixfs-v1-2025): ${cid}"
 
       - name: Upload OCI archive as a run artifact (the ops-side pin source)
+        if: ${{ inputs.dry_run != 'true' }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
           name: ${{ steps.oci.outputs.archive }}
@@ -203,6 +224,7 @@ jobs:
           retention-days: 90
 
       - name: Record published digest + IPFS mirror pair
+        if: ${{ inputs.dry_run != 'true' }}
         run: |
           cid='${{ steps.cid.outputs.cid }}'
           archive='${{ steps.oci.outputs.archive }}'
@@ -226,4 +248,16 @@ jobs:
             echo "  which pins THESE artifact bytes → the SAME CID above, fetchable at https://ipfs.pocketforge.org/ipfs/${cid}"
             echo ""
             echo "The DIGEST is the join key across both channels; consumers pin the DIGEST, not a moving tag (docs/IMAGE-PUBLISHING.md §6/§9)."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Record dry-run summary (nothing published)
+        if: ${{ inputs.dry_run == 'true' }}
+        run: |
+          {
+            echo "### publish-image DRY RUN — nothing published"
+            echo ""
+            echo "- ref: \`${GITHUB_REF}\` @ \`${GITHUB_SHA}\`"
+            echo "- image BUILT locally (\`$IMAGE:tmp-build\`); NO ghcr login, NO tag push, NO attestation"
+            echo "- kubo install step above ran for real (bounded, both hash pins verified)"
+            echo "- OCI export / CID / artifact skipped (they need the published ghcr digest)"
           } >> "$GITHUB_STEP_SUMMARY"
