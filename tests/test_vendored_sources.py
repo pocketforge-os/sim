@@ -77,7 +77,7 @@ class VendoredSourcePinTests(unittest.TestCase):
             (ROOT / "tests" / "uinput_inventory.py").read_bytes()).hexdigest()
         self.assertEqual(digest, fields["fixture_sha256"])
         self.assertEqual(fields["source_commit"],
-                         "9cfba117de3bac4d51061738bc6076e027f3c463")
+                         "1aa5bd677efd993e34fdda54496122c79451780e")
 
     def test_every_vendored_file_matches_its_pin(self):
         failures = [f for f in
