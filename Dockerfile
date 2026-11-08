@@ -52,12 +52,18 @@ ENV DEBIAN_FRONTEND=noninteractive
 # window) is already in the past on any later rebuild — without this, `apt-get update` rejects them
 # as expired and the pin would not actually be reproducible-forever. Retries hardens against
 # snapshot.debian.org's occasional slowness/rate-limiting.
+# Retries::Delay=false is REQUIRED with Retries (tsp-hqm1p.142). bookworm's apt (2.6.x) deadlocks
+# `apt-get update` for good when one index fails transiently while another on the same host
+# succeeds and the retry is delayed (LP #2003851, fixed only in apt >= 3.0.3). The NAS apt cache
+# causes that partial failure when parallel stages ask for the same InRelease, so sim-suite hung
+# 45 min with no output. Undelayed retries cannot deadlock. tests/test_apt_retry_deadlock.py
+# replays the failure. The other base stages below use the same apt.conf.
 ARG SNAPSHOT_TIMESTAMP
 RUN set -eux; \
     printf 'deb http://snapshot.debian.org/archive/debian/%s/ bookworm main\ndeb http://snapshot.debian.org/archive/debian-security/%s/ bookworm-security main\ndeb http://snapshot.debian.org/archive/debian/%s/ bookworm-updates main\n' \
       "${SNAPSHOT_TIMESTAMP}" "${SNAPSHOT_TIMESTAMP}" "${SNAPSHOT_TIMESTAMP}" > /etc/apt/sources.list; \
     rm -f /etc/apt/sources.list.d/debian.sources; \
-    printf 'Acquire::Check-Valid-Until "false";\nAcquire::Retries "5";\n' > /etc/apt/apt.conf.d/99pf-snapshot
+    printf 'Acquire::Check-Valid-Until "false";\nAcquire::Retries "5";\nAcquire::Retries::Delay "false";\n' > /etc/apt/apt.conf.d/99pf-snapshot
 RUN apt-get update && apt-get install -y --no-install-recommends \
       git ca-certificates build-essential gcc g++ \
       gcc-aarch64-linux-gnu g++-aarch64-linux-gnu libc6-dev-arm64-cross \
@@ -74,7 +80,8 @@ RUN tests/test_uinput_domain_c.sh \
  && python3 -m unittest -v tests/test_uinput_domain.py \
  && python3 tests/uinput_inventory.py --self-test \
  && python3 tests/uinput_inventory.py \
- && python3 -m unittest -v tests.test_vendored_sources
+ && python3 -m unittest -v tests.test_vendored_sources \
+ && python3 -m unittest -v tests.test_apt_retry_deadlock
 
 # ───────────────────────────── qemu-tsp (evdev/uinput ioctl fork) ─────────────────────────────
 FROM toolchain AS qemu
@@ -176,7 +183,7 @@ RUN set -eux; \
     printf 'deb http://snapshot.debian.org/archive/debian/%s/ bookworm main\ndeb http://snapshot.debian.org/archive/debian-security/%s/ bookworm-security main\ndeb http://snapshot.debian.org/archive/debian/%s/ bookworm-updates main\n' \
       "${SNAPSHOT_TIMESTAMP}" "${SNAPSHOT_TIMESTAMP}" "${SNAPSHOT_TIMESTAMP}" > /etc/apt/sources.list; \
     rm -f /etc/apt/sources.list.d/debian.sources; \
-    printf 'Acquire::Check-Valid-Until "false";\nAcquire::Retries "5";\n' > /etc/apt/apt.conf.d/99pf-snapshot
+    printf 'Acquire::Check-Valid-Until "false";\nAcquire::Retries "5";\nAcquire::Retries::Delay "false";\n' > /etc/apt/apt.conf.d/99pf-snapshot
 RUN apt-get update && apt-get install -y --no-install-recommends gcc-aarch64-linux-gnu libc6-dev-arm64-cross git ca-certificates \
  && rm -rf /var/lib/apt/lists/* && rustup target add aarch64-unknown-linux-gnu
 RUN git clone "${RUNTIME_REPO}" /src/runtime && git -C /src/runtime checkout --quiet "${RUNTIME_COMMIT}" \
@@ -198,7 +205,7 @@ RUN set -eux; \
     printf 'deb http://snapshot.debian.org/archive/debian/%s/ bookworm main\ndeb http://snapshot.debian.org/archive/debian-security/%s/ bookworm-security main\ndeb http://snapshot.debian.org/archive/debian/%s/ bookworm-updates main\n' \
       "${SNAPSHOT_TIMESTAMP}" "${SNAPSHOT_TIMESTAMP}" "${SNAPSHOT_TIMESTAMP}" > /etc/apt/sources.list; \
     rm -f /etc/apt/sources.list.d/debian.sources; \
-    printf 'Acquire::Check-Valid-Until "false";\nAcquire::Retries "5";\n' > /etc/apt/apt.conf.d/99pf-snapshot
+    printf 'Acquire::Check-Valid-Until "false";\nAcquire::Retries "5";\nAcquire::Retries::Delay "false";\n' > /etc/apt/apt.conf.d/99pf-snapshot
 RUN apt-get update && apt-get install -y --no-install-recommends \
       python3 bubblewrap file ca-certificates \
     && rm -rf /var/lib/apt/lists/*
